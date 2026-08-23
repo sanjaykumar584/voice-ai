@@ -10,7 +10,7 @@ import os
 from dotenv import load_dotenv
 from loguru import logger
 from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.frames.frames import EndWorkerFrame
+from pipecat.frames.frames import EndWorkerFrame, LLMRunFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
@@ -19,13 +19,14 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMUserAggregatorParams,
 )
-from pipecat.runner.types import RunnerArguments
+from pipecat.runner.types import RunnerArguments, SmallWebRTCRunnerArguments
 from pipecat.serializers.vobiz import VobizFrameSerializer, parse_vobiz_start
 from pipecat.services.llm_service import FunctionCallParams
 from pipecat.services.sarvam.llm import SarvamLLMService
 from pipecat.services.sarvam.stt import SarvamSTTService
 from pipecat.services.sarvam.tts import SarvamTTSService
-from pipecat.transports.base_transport import BaseTransport
+from pipecat.transports.base_transport import BaseTransport, TransportParams
+from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 from pipecat.transports.websocket.fastapi import (
     FastAPIWebsocketParams,
     FastAPIWebsocketTransport,
@@ -67,7 +68,29 @@ async def end_call(params: FunctionCallParams):
     await params.llm.push_frame(EndWorkerFrame())
 
 
-async def run_bot(transport: BaseTransport, handle_sigint: bool, body_data: dict | None = None):
+def _dev_reminder_body() -> dict | None:
+    """Read a sample reminder body from DEV_REMINDER_BODY (dev-only).
+
+    Lets the browser (SmallWebRTC) test exercise the real reminder flow with
+    per-call details even though there is no Vobiz /start body. Ignored when a
+    real body_data was supplied by the transport.
+    """
+    raw = os.getenv("DEV_REMINDER_BODY")
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        logger.warning("DEV_REMINDER_BODY is not valid JSON; ignoring.")
+        return None
+
+
+async def run_bot(
+    transport: BaseTransport,
+    handle_sigint: bool,
+    body_data: dict | None = None,
+    audio_in_sample_rate: int = 8000,
+):
     api_key = os.getenv("SARVAM_API_KEY")
 
     llm = SarvamLLMService(api_key=api_key)
@@ -111,6 +134,9 @@ async def run_bot(transport: BaseTransport, handle_sigint: bool, body_data: dict
             }
         )
 
+    if body_data is None:
+        body_data = _dev_reminder_body()
+
     tools = [log_outcome, end_call]
 
     context = LLMContext(messages, tools=tools)
@@ -136,8 +162,8 @@ async def run_bot(transport: BaseTransport, handle_sigint: bool, body_data: dict
     task = PipelineTask(
         pipeline,
         params=PipelineParams(
-            audio_in_sample_rate=8000,   # Vobiz MULAW input (8kHz telephony)
-            audio_out_sample_rate=24000, # Sarvam bulbul:v3-beta native (auto-resampled to 8kHz for Vobiz)
+            audio_in_sample_rate=audio_in_sample_rate,  # Vobiz 8kHz mu-law / SmallWebRTC 16kHz
+            audio_out_sample_rate=24000, # Sarvam bulbul:v3-beta native (auto-resampled to the transport rate)
             enable_metrics=True,
             enable_usage_metrics=True,
         ),
@@ -145,8 +171,19 @@ async def run_bot(transport: BaseTransport, handle_sigint: bool, body_data: dict
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
-        # Wait for the user to speak first 
         logger.info("Starting outbound call conversation")
+        # Speak first (reminder calls shouldn't wait for the caller): seed a
+        # one-off instruction and trigger a single LLM run.
+        context.add_message(
+            {
+                "role": "developer",
+                "content": (
+                    "The call has just started. Begin with your greeting now and "
+                    "deliver the reminder details."
+                ),
+            }
+        )
+        await task.queue_frames([LLMRunFrame()])
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
@@ -171,6 +208,25 @@ async def bot(
 ):
     """Main bot entry point compatible with Pipecat Cloud."""
 
+    # Dev-only browser path (no Vobiz): SmallWebRTC via the dev runner.
+    # `python bot.py` -> prebuilt UI at http://localhost:7860.
+    if isinstance(runner_args, SmallWebRTCRunnerArguments):
+        transport = SmallWebRTCTransport(
+            webrtc_connection=runner_args.webrtc_connection,
+            params=TransportParams(
+                audio_in_enabled=True,
+                audio_out_enabled=True,
+            ),
+        )
+        await run_bot(
+            transport,
+            runner_args.handle_sigint,
+            body_data=runner_args.body,
+            audio_in_sample_rate=16000,
+        )
+        return
+
+    # Vobiz telephony path (called by server.py with a live WebSocket).
     # Read Vobiz's `start` event off the WebSocket to learn the negotiated
     # wire format (encoding + sample rate + IDs). Env vars are fallback hints.
     env_encoding = os.getenv("VOBIZ_ENCODING", "audio/x-mulaw")
@@ -215,3 +271,9 @@ async def bot(
     handle_sigint = runner_args.handle_sigint
 
     await run_bot(transport, handle_sigint, body_data=body_data)
+
+
+if __name__ == "__main__":
+    from pipecat.runner.run import main
+
+    main()

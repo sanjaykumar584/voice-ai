@@ -79,6 +79,17 @@ Key facts locked in during research:
 - [x] Function tools: `log_outcome(status, note)` (logs outcome) + `end_call` (graceful `EndWorkerFrame`)
 - [x] Keep recording: `<Record>` → MP3 in `recordings/` (unchanged)
 
+### Phase 4.5 — Dev-only browser testing (SmallWebRTC, no Vobiz)
+- [x] Add `webrtc` + `runner` extras to requirements (aiortc, opencv, `pipecat-ai-prebuilt` UI); installed
+- [x] `bot()` branches on runner args: `SmallWebRTCRunnerArguments` → SmallWebRTCTransport (dev), else Vobiz path
+- [x] `run_bot()` transport-aware input sample rate (Vobiz 8000 / browser 16000)
+- [x] Bot speaks first via `LLMRunFrame` + `context.add_message()` on connect (both modes)
+- [x] `main()` dev-runner entry (`python bot.py` → prebuilt UI at localhost:7860)
+- [x] `DEV_REMINDER_BODY` env injects a sample reminder for the browser test
+- [x] Verified: dev runner boots (`/status` ready, `/client/` 200); `server.py` still boots clean
+- [ ] **Test in browser**: `python bot.py` → open http://localhost:7860 → click start → bot greets → conversation → `[OUTCOME]` tool log fires
+- [ ] Regression note: Vobiz phone path unchanged (`python server.py`); full call test waits for a number
+
 ### Phase 5 — First live call (local + ngrok)
 - [ ] `ngrok http 7860`; copy URL into `PUBLIC_URL`; restart server
 - [ ] `POST /start` to dial a test number with a `body`
@@ -108,6 +119,18 @@ Key facts locked in during research:
 - Current status: <Phase> / checklist state.
 - Next steps.
 -->
+
+### 2026-08-24 — Dev-only browser testing wired up (SmallWebRTC)
+- Requirement: test the Sarvam pipeline without a Vobiz number; quick switch between browser and phone; browser mode is dev-only.
+- Discovered the Pipecat **dev runner** (`python bot.py` via `pipecat.runner.run.main()`) already serves the prebuilt UI at localhost:7860 and selects transports via `-t`/`/start` — used it instead of hand-rolling a WebRTC server.
+- `requirements.txt`: extra → `pipecat-ai[websocket,sarvam,silero,webrtc,runner]`. Installed `aiortc`, `opencv-python-headless`, `pipecat-ai-prebuilt` (the UI).
+- `bot.py`:
+  - `bot()` branches: `isinstance(runner_args, SmallWebRTCRunnerArguments)` → `SmallWebRTCTransport(webrtc_connection, TransportParams(audio_in_enabled=True, audio_out_enabled=True))`; otherwise the unchanged Vobiz path. No config flags needed.
+  - `run_bot()` gained `audio_in_sample_rate` (8000 Vobiz / 16000 browser) and now **speaks first** on connect: `context.add_message(developer "begin greeting…")` + `await task.queue_frames([LLMRunFrame()])` (verified `PipelineTask.queue_frames` exists).
+  - Added `main()` → `from pipecat.runner.run import main; main()`.
+  - Added `DEV_REMINDER_BODY` (dev-only JSON) so the browser test exercises the real reminder flow; set a sample in `.env`.
+- Verified: `compileall` clean; imports OK; `python bot.py -t webrtc` boots → `/status` ready + `/client/` 200; `python server.py` boots → `/active-calls` responds. (First pkill attempt self-matched the shell — cleaned up by PID; port 7860 confirmed free.)
+- Current status: **ready for the browser test**. Next: user runs `python bot.py`, opens http://localhost:7860, talks to the bot; then buy a Vobiz number to test the phone path.
 
 ### 2026-08-24 — Phase 1–4: codebase seeded + swapped to Sarvam
 - Cloned `vobiz-ai/Vobiz-X-Pipecat` (commit: latest on master) into the workspace root; files: `server.py`, `bot.py`, `download_recording.py`, `env.example`, `requirements.txt`, `README.md`, `LICENSE`, `.gitignore`.
