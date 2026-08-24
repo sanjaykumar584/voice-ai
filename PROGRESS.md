@@ -90,6 +90,39 @@ Key facts locked in during research:
 - [ ] **Test in browser**: `python bot.py` → open http://localhost:7860 → click start → bot greets → conversation → `[OUTCOME]` tool log fires
 - [ ] Regression note: Vobiz phone path unchanged (`python server.py`); full call test waits for a number
 
+### Phase 4B — EMI Collections agent (single system prompt, mirrors Sarvam dashboard)
+- [x] `collections_logic.py`: `compute_derived()` (emis_due_till_today / overdue_count / overdue_amount / remaining_tenor / has_arrears) — deterministic, self-tested against the prompt's worked example (14 / 8 / 89,464 / 30)
+- [x] Full collections system prompt embedded as template; variables filled from per-call data
+- [x] `developer` message seeds variables + computed derived values + today's date (LLM never computes)
+- [x] Tools: `log_outcome(status)` → PTP / NO_PTP / NO_ARREARS / DISPUTE / HARDSHIP / DECEASED / SURRENDER / HOSTILE / WRONG_NUMBER; `end_call` kept
+- [x] Speak-first greeting = Step 1 identity (no company/loan/amount before confirmation)
+- [x] Tamil-only tuning: STT `saaras:v3` + `language=ta-IN`; TTS bulbul:v3-beta + `language=ta-IN`, voice `priya`
+- [x] Mock call data in `DEV_REMINDER_BODY` (Kumar / ABC Finance / ₹89,464 arrears)
+- [x] Verified: derived self-test OK, compileall clean, prompt fully filled, both modes boot
+- [ ] **Browser test the full script**: `python bot.py` → identity → arrears in 3 turns → ladder → PTP logged
+- [ ] Phone path regression once Vobiz number arrives
+- [ ] (Later) Pipecat Flows for enforced ladder + rung-5 gate + escalation flags
+
+### Phase 4C — Bugfix: greeting name missing + dropped short utterances
+- [x] **Root cause (greeting)**: WebRTC dev path passed the raw RTVI `/api/offer` payload as `body_data` — it has no collections fields, so every variable (customer name, company, amounts) filled empty → "Hello, pesreengala?" and incoherent replies
+- [x] Fix: `_is_collections_body()` — if the incoming body lacks `first_due_date`+`emi`, fall back to `DEV_REMINDER_BODY` (real `/start` bodies are used as-is)
+- [x] Verified: offer payload → mock → greeting now "Hello, Kumar pesreengala?"
+- [x] **Root cause (dropped turns)**: Silero VAD drove turn boundaries while Sarvam STT segmented audio server-side; on user-stop, `flush()` was called but could return empty for short clips → first 3 short utterances ("ஹலோ"…) got no response
+- [x] Fix: `vad_signals=True` + `high_vad_sensitivity=True` on Sarvam STT so Sarvam's own VAD pairs each transcript with end-of-speech atomically; removed Silero from the aggregator (turn controller handles Sarvam's `UserStarted/StoppedSpeakingFrame` natively)
+- [x] Added `keepalive_timeout=10` on STT; `LOG_LEVEL=DEBUG` toggle to surface transcripts/turn frames
+- [x] Verified: compile clean, imports OK, both modes boot
+- [x] **Retest in browser** (`python bot.py` → localhost:7860) with `LOG_LEVEL=DEBUG`; confirm greeting has the name and short replies get responses
+- [x] Retested after body/VAD fixes — replies now come per-utterance but were slow (~3–6s)
+
+### Phase 4D — Latency: reply too slow (~3–6s)
+- [x] Diagnosed (NOT WebSockets — transport is ~ms): (1) turn-stop waited on smart-turn analyzer + Sarvam `SARVAM_TTFS_P99=1.17s` safety net; (2) `sarvam-105b` LLM ran at server-default reasoning effort + wiki grounding; (3) TTS buffered 50 chars before first audio
+- [x] LLM: `SarvamLLMService.Settings(reasoning_effort="low", wiki_grounding=False, max_tokens=150, temperature=0.5)` — big first-token win for a scripted bot
+- [x] Turn-stop: added `SpeechTimeoutUserTurnStopStrategy(user_speech_timeout=0.8, wait_for_transcript=True)` FIRST in stop strategies (fires ~0.8s after transcript); smart-turn analyzer kept as fallback
+- [x] TTS: `SarvamTTSService.Settings(min_buffer_size=12)` — first audio chunk sooner
+- [x] Added `MetricsLogger` pipeline processor → logs `[METRICS]` TTFB/TTFA/processing/LLM tokens/TTS chars per turn at INFO
+- [x] Verified: compile clean, imports OK, both modes boot
+- [ ] **Retest**: measure per-turn latency from `[METRICS]` logs; tune Sarvam STT VAD end-of-speech params (`negative_frames_count`/`negative_frames_window`) if STT-side delay remains
+
 ### Phase 5 — First live call (local + ngrok)
 - [ ] `ngrok http 7860`; copy URL into `PUBLIC_URL`; restart server
 - [ ] `POST /start` to dial a test number with a `body`
@@ -119,6 +152,38 @@ Key facts locked in during research:
 - Current status: <Phase> / checklist state.
 - Next steps.
 -->
+
+### 2026-08-24 — Latency fix: reply time ~3–6s → bounded
+- User: "each reply takes too long — is it the WebSockets?" Answer: no — the WebSocket/WebRTC transport is ~ms. Verified in source that the delay stacked three AI-stage latencies.
+- **Turn-stop:** the smart-turn stop strategy waits for its analyzer then Sarvam's P99 safety net (`SARVAM_TTFS_P99 = 1.17s`) since Sarvam transcripts aren't `finalized=True`. Added `SpeechTimeoutUserTurnStopStrategy(user_speech_timeout=0.8, wait_for_transcript=True)` as the FIRST stop strategy (transcript-driven — verified it re-arms on `TranscriptionFrame`, so it works with Sarvam VAD); `LocalSmartTurnAnalyzerV3` kept as fallback.
+- **LLM:** `sarvam-105b` was running at server-default reasoning effort + wiki grounding. Set `reasoning_effort="low"`, `wiki_grounding=False`, `max_tokens=150`, `temperature=0.5` (SarvamLLMSettings validated) — the likely single biggest win.
+- **TTS:** `min_buffer_size` default 50 → set 12 so Sarvam synthesizes the first chunk sooner (better TTFA).
+- **Observability:** added `MetricsLogger` FrameProcessor at pipeline end logging `[METRICS] TTFB/TTFA/Processing <ms>`, LLM token usage, TTS chars at INFO.
+- Verified: compileall clean, imports OK, dev runner + server.py both boot.
+- Current status: **retest pending** — run `python bot.py`, watch `[METRICS]` to see the per-stage split; if STT-side delay remains, tune Sarvam `negative_frames_count`/`negative_frames_window`.
+
+### 2026-08-24 — Architecture doc added
+- Created `ARCHITECTURE.md`: overview, tech stack, high-level + pipeline diagrams, the two run modes, per-call data → prompt flow, Vobiz call lifecycle, file map, env reference, security/compliance notes.
+
+### 2026-08-24 — Bugfix: greeting without name + only every-4th utterance answered
+- User's browser test: greeting "Hello, pesreengala?" (no name), and the bot replied only after the 4th short Tamil utterance ("ஹலோ" x3 → "ஹலோ கேட்குதா?"), then derailed ("நீங்க யார்?").
+- **Bug 1 (greeting/variables):** the SmallWebRTC (dev) path passed `runner_args.body` — the raw RTVI `/api/offer` payload — into `run_bot`. It's not a collections body, so `build_call_context` got no `customer_name`/amounts → empty name + zeroed variables (also explains the incoherent "who are you?" reply). Fixed with `_is_collections_body()` fallback to `DEV_REMINDER_BODY`; verified greeting now "Hello, Kumar pesreengala?".
+- **Bug 2 (dropped short turns):** two VADs were fighting. Silero (on the user aggregator) decided user start/stop, then flushed Sarvam STT on stop; Sarvam's server-side segmentation could return an empty transcript for short clips → turns 1–3 produced no user message → no LLM response. Fixed by switching to Sarvam's own VAD: `vad_signals=True` + `high_vad_sensitivity=True` on `SarvamSTTService`, removed Silero (`LLMUserAggregatorParams()`), added STT keepalive. Sarvam now emits `UserStartedSpeakingFrame`/`UserStoppedSpeakingFrame` + paired transcripts atomically (turn controller handles these natively — verified in source).
+- Added `LOG_LEVEL=DEBUG` env toggle to surface STT transcripts and turn frames on the next test.
+- Verified: compileall clean, imports OK, dev runner + server.py both boot.
+- Current status: **retest pending.** Next: `python bot.py` (optionally `LOG_LEVEL=DEBUG`) → open localhost:7860 → confirm greeting has the name, short replies get responses, ladder runs, `[OUTCOME] PTP` logs.
+
+### 2026-08-24 — EMI Collections agent implemented (single system prompt)
+- User supplied the real agent prompt (`prompt.txt`): outbound EMI collections voice agent in colloquial Tamil/Tanglish. Decisions: single system prompt now (mirror Sarvam dashboard), Flows later; **mock static data**; **caller language Tamil only**.
+- Mock data (worked-example-based, user confirmed "use mock"): Meena / ABC Finance / Kumar / acct 1234 / principal 371,987 / EMI 11,183 / first_due 2025-07-01 / tenor 36 / received 6 → derived 14 / 8 / 89,464 / 30.
+- New `collections_logic.py`:
+  - `compute_derived(body, today)` — deterministic emis_due_till_today (month-boundary count, due_day-aware), overdue_count (floor 0), overdue_amount, remaining_tenor, has_arrears. `_selftest()` asserts the prompt's worked example.
+  - `COLLECTIONS_SYSTEM_PROMPT` — the user's full script as a template; stripped variables mapped to sensible placeholders (`{customer_name}`, `{company_name}`, `{agent_name}`, `{account_number_last4}`, `{principal}`, `{emi}`, `{first_due_date}`, `{tenor_months}`, `{emis_received}`, + derived). NOTE in code: ambiguous stripped spots (e.g. §7.4 disbursed line, §8 full-number prohibition) mapped sensibly — user should review the filled prompt.
+  - `build_call_context(body)` → (system_prompt, developer_message) with variables + computed derived + today's date.
+- `bot.py`: dropped generic reminder prompt; uses `build_call_context`; `log_outcome` statuses = collections set; STT/TTS set to `language=Language.TA_IN`; speak-first greeting = Step 1 identity.
+- `.env`/`env.example`: `DEV_REMINDER_BODY` = the mock collections payload.
+- Verified: selftest OK; compileall clean; prompt fully filled (no leftover placeholders; "8 EMI pending … 89464", "Hello, Kumar pesreengala?" correct); dev runner + server.py both boot.
+- Current status: **ready for the browser run of the full collections script.** Next: `python bot.py`, open http://localhost:7860, walk the script (identity → arrears → ladder → PTP), check `[OUTCOME]` logs; then buy Vobiz number for the phone path.
 
 ### 2026-08-24 — Dev-only browser testing wired up (SmallWebRTC)
 - Requirement: test the Sarvam pipeline without a Vobiz number; quick switch between browser and phone; browser mode is dev-only.

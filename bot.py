@@ -6,11 +6,19 @@
 
 import json
 import os
+import sys
 
 from dotenv import load_dotenv
 from loguru import logger
-from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.frames.frames import EndWorkerFrame, LLMRunFrame
+from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
+from pipecat.frames.frames import EndWorkerFrame, Frame, LLMRunFrame, MetricsFrame
+from pipecat.metrics.metrics import (
+    LLMUsageMetricsData,
+    ProcessingMetricsData,
+    TTFAMetricsData,
+    TTFBMetricsData,
+    TTSUsageMetricsData,
+)
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
@@ -19,44 +27,46 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMUserAggregatorParams,
 )
+from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.runner.types import RunnerArguments, SmallWebRTCRunnerArguments
 from pipecat.serializers.vobiz import VobizFrameSerializer, parse_vobiz_start
 from pipecat.services.llm_service import FunctionCallParams
 from pipecat.services.sarvam.llm import SarvamLLMService
 from pipecat.services.sarvam.stt import SarvamSTTService
 from pipecat.services.sarvam.tts import SarvamTTSService
+from pipecat.transcriptions.language import Language
 from pipecat.transports.base_transport import BaseTransport, TransportParams
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 from pipecat.transports.websocket.fastapi import (
     FastAPIWebsocketParams,
     FastAPIWebsocketTransport,
 )
+from pipecat.turns.user_stop.speech_timeout_user_turn_stop_strategy import (
+    SpeechTimeoutUserTurnStopStrategy,
+)
+from pipecat.turns.user_stop.turn_analyzer_user_turn_stop_strategy import (
+    TurnAnalyzerUserTurnStopStrategy,
+)
+from pipecat.turns.user_turn_strategies import UserTurnStrategies
+
+from collections_logic import build_call_context
 
 load_dotenv(override=True)
 
-
-SYSTEM_PROMPT = (
-    "You are the automated calling assistant for a business that sends outbound "
-    "reminder calls. You call customers to remind them of an upcoming appointment, "
-    "payment, or delivery, and you collect their response.\n"
-    "Your responses will be read aloud over the phone, so keep them short, clear, and "
-    "conversational. Avoid special characters, emojis, bullets, or any formatting that "
-    "cannot be spoken.\n"
-    "Begin by saying: 'Hello! This is an automated reminder call from our team. Am I "
-    "speaking with the right person?' Then confirm the caller's identity, deliver the "
-    "reminder details you were given, and ask them to confirm, reschedule, or cancel.\n"
-    "Once the caller has given their answer and you have thanked them, call the "
-    "end_call function to end the call gracefully."
-)
+# Set LOG_LEVEL=DEBUG to surface STT transcripts + turn-detection frames while
+# debugging turn-taking (short utterances, barge-in, dropped replies).
+if os.getenv("LOG_LEVEL", "INFO").upper() == "DEBUG":
+    logger.remove()
+    logger.add(sys.stdout, level="DEBUG")
 
 
 async def log_outcome(params: FunctionCallParams, status: str, note: str = ""):
-    """Record the outcome of the reminder call so it can be reported back.
+    """Record the outcome of a collections call.
 
     Args:
-        status: The caller's response. One of "confirmed", "rescheduled",
-            "cancelled", "declined", or "no_answer".
-        note: Optional short note from the caller.
+        status: One of "PTP", "NO_PTP", "NO_ARREARS", "DISPUTE", "HARDSHIP",
+            "DECEASED", "SURRENDER", "HOSTILE", "WRONG_NUMBER".
+        note: Optional note. For PTP, echo the customer's own stated amount and date.
     """
     logger.info(f"[OUTCOME] call outcome: {status} — {note}")
     await params.result_callback({"recorded": True, "status": status})
@@ -85,6 +95,49 @@ def _dev_reminder_body() -> dict | None:
         return None
 
 
+def _is_collections_body(body) -> bool:
+    """True if ``body`` carries the collections per-call fields.
+
+    The WebRTC (dev) path passes the raw RTVI /api/offer payload as
+    ``runner_args.body``, which is NOT a collections body — only a real Vobiz
+    /start body (or the dev mock) has these fields. Fall back to the dev mock
+    in that case so the greeting and all variables are populated.
+    """
+    return (
+        isinstance(body, dict)
+        and bool(body.get("first_due_date"))
+        and bool(body.get("emi"))
+    )
+
+
+class MetricsLogger(FrameProcessor):
+    """Log per-service latency + usage at INFO so reply latency is debuggable.
+
+    Sits at the end of the pipeline and logs the MetricsFrame data the
+    services emit (enable_metrics is on): TTFB/TTFA/processing times per
+    processor, LLM token usage, and TTS character counts.
+    """
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        if isinstance(frame, MetricsFrame):
+            for m in frame.data:
+                if isinstance(m, (TTFBMetricsData, TTFAMetricsData, ProcessingMetricsData)):
+                    logger.info(
+                        f"[METRICS] {m.processor}: "
+                        f"{type(m).__name__.removesuffix('MetricsData').upper()} "
+                        f"{m.value * 1000:.0f} ms"
+                    )
+                elif isinstance(m, LLMUsageMetricsData):
+                    v = m.value
+                    logger.info(
+                        f"[METRICS] {m.processor}: LLM tokens in={v.prompt_tokens} "
+                        f"out={v.completion_tokens} reasoning={v.reasoning_tokens}"
+                    )
+                elif isinstance(m, TTSUsageMetricsData):
+                    logger.info(f"[METRICS] {m.processor}: TTS chars={m.value}")
+        await self.push_frame(frame, direction)
+
+
 async def run_bot(
     transport: BaseTransport,
     handle_sigint: bool,
@@ -93,59 +146,100 @@ async def run_bot(
 ):
     api_key = os.getenv("SARVAM_API_KEY")
 
-    llm = SarvamLLMService(api_key=api_key)
+    # Latency: a scripted collections bot doesn't need deep reasoning — low
+    # reasoning effort + no wiki grounding cut sarvam-105b first-token time
+    # sharply. max_tokens bounds response length (the script wants <=10 words).
+    llm = SarvamLLMService(
+        api_key=api_key,
+        settings=SarvamLLMService.Settings(
+            reasoning_effort="low",
+            wiki_grounding=Fealse,
+            max_tokens=150,
+            temperature=0.5,
+        ),
+    )
 
     stt = SarvamSTTService(
         api_key=api_key,
+        keepalive_timeout=10.0,
+        keepalive_interval=5.0,
         settings=SarvamSTTService.Settings(
             model=os.getenv("SARVAM_STT_MODEL", "saaras:v3"),
+            language=Language.TA_IN,
+            # Let Sarvam's own VAD drive turn boundaries. It segments audio on
+            # its side and pairs each transcript with end-of-speech atomically,
+            # which is far more reliable for short Tamil utterances than a
+            # generic Silero VAD (whose stop triggers a flush that can return
+            # empty for short clips). Silero was dropping the first few turns.
+            vad_signals=True,
+            high_vad_sensitivity=True,
         ),
     )
 
     # bulbul:v3-beta outputs 24000 Hz, matching PipelineParams.audio_out_sample_rate
     # below. If you switch to bulbul:v2 (22050 Hz), change audio_out_sample_rate too.
+    # min_buffer_size: buffer fewer characters before synthesizing so the first
+    # audio chunk (TTFA) arrives sooner.
     tts = SarvamTTSService(
         api_key=api_key,
         sample_rate=int(os.getenv("SARVAM_TTS_SAMPLE_RATE", "24000")),
         settings=SarvamTTSService.Settings(
             model=os.getenv("SARVAM_TTS_MODEL", "bulbul:v3-beta"),
             voice=os.getenv("SARVAM_VOICE", "priya"),
+            language=Language.TA_IN,
+            min_buffer_size=12,
         ),
     )
+
+    if not _is_collections_body(body_data):
+        # The WebRTC dev path passes the raw RTVI offer payload here; use the
+        # dev mock instead so the greeting and variables are populated. A real
+        # Vobiz /start body has the collections fields and is used as-is.
+        body_data = _dev_reminder_body()
+
+    # Fill the collections script with this call's variables + computed derived
+    # values, and seed them as a developer message so the LLM never computes.
+    system_prompt, developer_message = build_call_context(body_data)
 
     messages = [
         {
             "role": "system",
-            "content": SYSTEM_PROMPT,
+            "content": system_prompt,
+        },
+        {
+            "role": "developer",
+            "content": developer_message,
         },
     ]
-
-    # Prime this specific call with the reminder details carried from POST /start
-    # (body -> query param on /answer -> base64 body= param on the WebSocket URL).
-    if body_data:
-        messages.append(
-            {
-                "role": "developer",
-                "content": (
-                    "Reminder details for THIS call (use them to inform the caller; if any "
-                    "field is missing, ask the caller for it): "
-                    + json.dumps(body_data)
-                ),
-            }
-        )
-
-    if body_data is None:
-        body_data = _dev_reminder_body()
 
     tools = [log_outcome, end_call]
 
     context = LLMContext(messages, tools=tools)
-    # pipecat 1.x: vad_analyzer lives on LLMUserAggregatorParams now,
-    # not on the transport (transport-side vad_analyzer is silently a no-op).
+    # Turn detection is driven by Sarvam STT's own VAD signals (vad_signals=True
+    # on the STT), which broadcast UserStarted/StoppedSpeakingFrame through the
+    # pipeline. No separate vad_analyzer here — a second (Silero) VAD caused a
+    # race where short utterances were flushed before Sarvam had a transcript.
+    #
+    # Stop strategies (latency): the speech-timeout fires ~0.8s after the last
+    # transcript (bounded reply), instead of waiting on the smart-turn analyzer
+    # + Sarvam's 1.17s P99 safety net. The analyzer stays as a fallback.
+    user_turn_strategies = UserTurnStrategies(
+        stop=[
+            SpeechTimeoutUserTurnStopStrategy(
+                user_speech_timeout=0.8,
+                wait_for_transcript=True,
+            ),
+            TurnAnalyzerUserTurnStopStrategy(
+                turn_analyzer=LocalSmartTurnAnalyzerV3(cpu_count=1)
+            ),
+        ]
+    )
     context_aggregator = LLMContextAggregatorPair(
         context,
-        user_params=LLMUserAggregatorParams(vad_analyzer=SileroVADAnalyzer()),
+        user_params=LLMUserAggregatorParams(user_turn_strategies=user_turn_strategies),
     )
+
+    metrics_logger = MetricsLogger()
 
     pipeline = Pipeline(
         [
@@ -156,6 +250,7 @@ async def run_bot(
             tts,  # Text-To-Speech
             transport.output(),  # Websocket output to client
             context_aggregator.assistant(),
+            metrics_logger,  # Log per-service TTFB/usage at INFO
         ]
     )
 
@@ -172,14 +267,14 @@ async def run_bot(
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
         logger.info("Starting outbound call conversation")
-        # Speak first (reminder calls shouldn't wait for the caller): seed a
+        # Speak first (collections calls shouldn't wait for the caller): seed a
         # one-off instruction and trigger a single LLM run.
         context.add_message(
             {
                 "role": "developer",
                 "content": (
-                    "The call has just started. Begin with your greeting now and "
-                    "deliver the reminder details."
+                    "The call has just started. Begin with Step 1 — Identity. Do NOT "
+                    "state the company, the loan, or any amount until identity is confirmed."
                 ),
             }
         )
