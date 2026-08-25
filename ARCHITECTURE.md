@@ -31,12 +31,12 @@ Built on three pieces:
 - **`pipecat-ai` 1.7.0** with extras: `websocket` (telephony transport), `sarvam` (services), `silero`, `webrtc` (dev browser), `runner` (dev runner + prebuilt UI)
 - **`pipecat-vobiz` 0.0.3** — `VobizFrameSerializer` + `parse_vobiz_start()` (the bridge between Pipecat frames and Vobiz's wire format)
 
-### Services (Sarvam AI)
+### Services (Sarvam AI + swappable LLM)
 | Service | Class | Config |
 |---|---|---|
 | STT | `SarvamSTTService` | `saaras:v3`, `language=ta-IN`, `vad_signals=True`, `high_vad_sensitivity=True`, keepalive 10s |
-| LLM | `SarvamLLMService` | `sarvam-105b` (OpenAI-compatible, function calling) |
-| TTS | `SarvamTTSService` | `bulbul:v3-beta`, `language=ta-IN`, voice `priya`, 24000 Hz |
+| **LLM (swappable)** | `LLM_PROVIDER` env: `sarvam` (default) · `deepseek` · `openai` | Sarvam `sarvam-105b` (reasoning-heavy, slow) OR `DeepSeekLLMService` (`deepseek-chat`) OR `OpenAILLMService` (`gpt-4o-mini`). **DeepSeek recommended for real-time voice.** |
+| TTS | `SarvamTTSService` | `bulbul:v3-beta`, `language=ta-IN`, voice `priya`, 24000 Hz, `min_buffer_size=30` (Sarvam rejects <30) |
 
 ### Telephony (Vobiz)
 - **REST API** (`https://api.vobiz.ai/api/v1`) — place outbound calls, transfer, fetch recordings; auth via `X-Auth-ID` / `X-Auth-Token`

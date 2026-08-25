@@ -153,6 +153,23 @@ Key facts locked in during research:
 - Next steps.
 -->
 
+### 2026-08-26 — LLM provider switch: DeepSeek integration
+- Measured sarvam-105b with the real collections prompt: TTFB ~1.1s but 7–19s of invisible reasoning, frequently `finish=length` with **empty content** (the 10s dead air + occasional silence). Confirmed `sarvam-30b`/`sarvam-m` are deprecated → no fast Sarvam chat model exists; a no-chain-of-thought prompt instruction doesn't suppress the reasoning.
+- Conclusion: keep Sarvam **STT + TTS**, swap only the LLM to a fast provider.
+- Added `LLM_PROVIDER` switch in `bot.py` (`_build_llm()`): `sarvam` (default, existing config) · `deepseek` (`DeepSeekLLMService`, `deepseek-chat`) · `openai` (`OpenAILLMService`, `gpt-4o-mini`). Generic `LLM_TEMPERATURE`/`LLM_MAX_TOKENS`; provider keys read from env with a clear error if missing. DeepSeek `supports_developer_role=False` → pipecat auto-translates our developer message to `system`.
+- `.env`/`env.example`/`CONFIG.md`/`ARCHITECTURE.md` updated (`LLM_PROVIDER=deepseek`, `DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL`).
+- Verified: clean error when key missing, DeepSeek service constructs with a dummy key, both modes boot.
+- Next: **user adds `DEEPSEEK_API_KEY` to `.env`, runs `python bot.py`, confirms replies are fast (~1-2s)**.
+
+### 2026-08-25 — Bugfix: LLM crash (wiki_grounding) + TTS 422 (min_buffer_size)
+- User hit two runtime failures after the config-var wiring: LLM `AsyncCompletions.create() got an unexpected keyword argument 'wiki_grounding'`, and TTS `Input parameters has to be a valid dictionary` (then connection-failed ×3).
+- Reproduced BOTH directly against the real Sarvam API (scripts in `/tmp/opencode`; note: `load_dotenv()` searches from the *script's* dir, so repros must pass the `.env` path explicitly — earlier repros 403'd on an empty key, a red herring).
+- **LLM:** `wiki_grounding=False` is passed as a Python kwarg to the OpenAI-compatible endpoint, which rejects it → remove entirely (also removed the `SARVAM_LLM_WIKI_GROUNDING` env var). Verified `reasoning_effort="low"` IS accepted and measured ~2× faster (2.0s → 1.1s) → keep. Discovered `sarvam-105b` reasons heavily (hundreds–1000s of tokens) before answering, so `max_tokens=150` truncated it mid-thought → empty replies; made `SARVAM_LLM_MAX_TOKENS` optional (empty = not sent).
+- **TTS:** Sarvam's TTS WS rejects `min_buffer_size < 30` with a 422 "Input parameters has to be a valid dictionary". Tested 15/20/25 = fail, 30/40/50 = OK. Changed default 12 → 30.
+- `env.example`, `.env`, `CONFIG.md` updated to match (removed wiki_grounding, max_tokens optional, min_buffer_size min 30).
+- Verified: compile clean, settings resolve (max_tokens NOT_GIVEN, min_buffer 30), both modes boot.
+- Current status: **ready to retest** — greeting + conversation should now work with faster LLM (`reasoning_effort=low`) and working TTS.
+
 ### 2026-08-25 — Config guide + all tunables exposed as env vars
 - Created `CONFIG.md`: every configurable parameter in plain language — what it does, current value, effect, and experiment range, grouped (LLM / STT / TTS / turn-taking / logging / Vobiz / code-fixed / per-call data).
 - Wired previously-hardcoded tunables to env vars (edit `.env`, no code): `SARVAM_LLM_REASONING_EFFORT|WIKI_GROUNDING|MAX_TOKENS|TEMPERATURE`, `SARVAM_STT_VAD_SIGNALS|HIGH_VAD_SENSITIVITY|KEEPALIVE_*` + fine-grained VAD (`MIN_SPEECH_FRAMES`, `FIRST_TURN_MIN_SPEECH_FRAMES`, `NEGATIVE_FRAMES_COUNT|WINDOW`, `START_SPEECH_VOLUME_THRESHOLD`, `POSITIVE/NEGATIVE_SPEECH_THRESHOLD`), `SARVAM_TTS_MIN_BUFFER_SIZE|MAX_CHUNK_LENGTH`, `TURN_SPEECH_TIMEOUT`, `LOG_LEVEL`.

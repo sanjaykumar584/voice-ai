@@ -20,14 +20,22 @@
 
 ---
 
-## 2. LLM (Sarvam `sarvam-105b`)
+## 2. LLM (the "brain" — provider-switchable)
+
+Sarvam **STT + TTS stay Sarvam**; only the LLM is swappable via `LLM_PROVIDER`.
 
 | Parameter | Where | Current | What it does | Effect / how to tune |
 |---|---|---|---|---|
-| `SARVAM_LLM_REASONING_EFFORT` | `.env` | `low` | How hard the model "thinks". `low`/`medium`/`high`. | **Biggest latency lever.** `low` = fast, snappy replies; `high` = slower but better at hard logic. This script is fixed steps, so keep `low`. If replies seem dumb, try `medium`. |
-| `SARVAM_LLM_WIKI_GROUNDING` | `.env` | `false` | Extra "look up knowledge" step Sarvam can do. | Adds latency; this bot doesn't need it. Keep `false`. |
-| `SARVAM_LLM_MAX_TOKENS` | `.env` | `150` | Max length of a reply (tokens). | Script wants ≤10 words. Too low truncates mid-sentence; 120–250 is safe. |
-| `SARVAM_LLM_TEMPERATURE` | `.env` | `0.5` | Randomness. `0` = always same, `1` = creative. | Keep 0.3–0.6 for a consistent, professional tone. |
+| `LLM_PROVIDER` | `.env` | `deepseek` | `sarvam` · `deepseek` · `openai`. | **sarvam-105b reasons heavily before answering (7–19s, sometimes nothing) — too slow for real-time voice.** DeepSeek (`deepseek-chat`) is fast (~1–2s) and cheap; OpenAI mini models also work. |
+| `LLM_TEMPERATURE` | `.env` | `0.5` | Randomness. `0` = always same, `1` = creative. | Keep 0.3–0.6 for a consistent, professional tone. |
+| `LLM_MAX_TOKENS` | `.env` | *(empty)* | Optional cap on reply length. | Leave EMPTY. (For Sarvam, a low cap truncates mid-reasoning → empty replies.) |
+| `SARVAM_LLM_REASONING_EFFORT` | `.env` | `low` | Sarvam-only: how hard the model thinks (`low`/`medium`/`high`). | Only used when `LLM_PROVIDER=sarvam`. `low` ≈ 2× faster. |
+| `DEEPSEEK_API_KEY` | `.env` | *(empty)* | Required for `LLM_PROVIDER=deepseek`. | Set it and `LLM_PROVIDER=deepseek` to use DeepSeek. |
+| `DEEPSEEK_MODEL` | `.env` | `deepseek-chat` | DeepSeek model. | `deepseek-chat` (V3) is the fast general model. |
+| `OPENAI_API_KEY` / `OPENAI_MODEL` | `.env` | *(empty)* / `gpt-4o-mini` | Required for `LLM_PROVIDER=openai`. | Set both to use OpenAI. |
+
+> ⚠️ `wiki_grounding` is **not** supported by Sarvam's OpenAI-compatible endpoint
+> (crashes the LLM) — there is intentionally no option for it.
 
 ---
 
@@ -65,7 +73,7 @@
 | `SARVAM_TTS_MODEL` | `.env` | `bulbul:v3-beta` | Text→speech model. | `bulbul:v3-beta` (24 kHz, many voices) · `bulbul:v2` (22.05 kHz). If you switch to v2, also set `SARVAM_TTS_SAMPLE_RATE=22050`. |
 | `SARVAM_TTS_SAMPLE_RATE` | `.env` | `24000` | Audio quality rate. | Must match the model (v3=24000, v2=22050). |
 | `SARVAM_VOICE` | `.env` | `priya` | The voice. | v3 voices: `aditya, priya, neha, rahul, pooja, rohan, simran, kavya, …`. Try a couple — pick what sounds right for your customer base. |
-| `SARVAM_TTS_MIN_BUFFER_SIZE` | `.env` | `12` | Characters collected before TTS starts speaking. | **Lower = faster first audio** (12–20 good); too low sounds choppy. 50+ = smooth but slower to start. |
+| `SARVAM_TTS_MIN_BUFFER_SIZE` | `.env` | `30` | Characters collected before TTS starts speaking. | **Lower = faster first audio.** Sarvam rejects values below **30** (422 error) — keep 30–50. 30 is the sweet spot for snappy replies. |
 | `SARVAM_TTS_MAX_CHUNK_LENGTH` | `.env` | `150` | Max characters per synthesis chunk. | Higher = fewer requests, more buffering. Leave ~150. |
 
 ---
