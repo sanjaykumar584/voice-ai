@@ -138,6 +138,27 @@ class MetricsLogger(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    v = os.getenv(name)
+    if v is None:
+        return default
+    return v.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _env_int(name: str, default: int | None) -> int | None:
+    v = os.getenv(name)
+    if v is None or v.strip() == "":
+        return default
+    return int(v)
+
+
+def _env_float(name: str, default: float | None) -> float | None:
+    v = os.getenv(name)
+    if v is None or v.strip() == "":
+        return default
+    return float(v)
+
+
 async def run_bot(
     transport: BaseTransport,
     handle_sigint: bool,
@@ -146,48 +167,63 @@ async def run_bot(
 ):
     api_key = os.getenv("SARVAM_API_KEY")
 
-    # Latency: a scripted collections bot doesn't need deep reasoning — low
-    # reasoning effort + no wiki grounding cut sarvam-105b first-token time
-    # sharply. max_tokens bounds response length (the script wants <=10 words).
+    # LLM — latency vs reasoning. A scripted collections bot doesn't need deep
+    # reasoning: "low" effort + no wiki grounding cut sarvam-105b first-token
+    # time sharply. max_tokens bounds response length (script wants <=10 words).
     llm = SarvamLLMService(
         api_key=api_key,
         settings=SarvamLLMService.Settings(
-            reasoning_effort="low",
-            wiki_grounding=Fealse,
-            max_tokens=150,
-            temperature=0.5,
+            reasoning_effort=os.getenv("SARVAM_LLM_REASONING_EFFORT", "low"),
+            wiki_grounding=_env_bool("SARVAM_LLM_WIKI_GROUNDING", False),
+            max_tokens=_env_int("SARVAM_LLM_MAX_TOKENS", 150),
+            temperature=_env_float("SARVAM_LLM_TEMPERATURE", 0.5),
         ),
     )
 
+    stt_settings = dict(
+        model=os.getenv("SARVAM_STT_MODEL", "saaras:v3"),
+        language=Language.TA_IN,
+        # Sarvam's own VAD drives turn boundaries and pairs each transcript with
+        # end-of-speech atomically (more reliable for short Tamil utterances than
+        # a Silero flush, which dropped short clips).
+        vad_signals=_env_bool("SARVAM_STT_VAD_SIGNALS", True),
+        high_vad_sensitivity=_env_bool("SARVAM_STT_HIGH_VAD_SENSITIVITY", True),
+    )
+    # Fine-grained VAD params (saaras:v3 only). Sent only when set in .env —
+    # unset lets Sarvam's server use its own defaults. Only tweak these to tune
+    # end-of-speech speed / short-utterance capture.
+    for env_key, settings_key, parser in [
+        ("SARVAM_STT_MIN_SPEECH_FRAMES", "min_speech_frames", _env_int),
+        ("SARVAM_STT_FIRST_TURN_MIN_SPEECH_FRAMES", "first_turn_min_speech_frames", _env_int),
+        ("SARVAM_STT_NEGATIVE_FRAMES_COUNT", "negative_frames_count", _env_int),
+        ("SARVAM_STT_NEGATIVE_FRAMES_WINDOW", "negative_frames_window", _env_int),
+        ("SARVAM_STT_START_SPEECH_VOLUME_THRESHOLD", "start_speech_volume_threshold", _env_float),
+        ("SARVAM_STT_POSITIVE_SPEECH_THRESHOLD", "positive_speech_threshold", _env_float),
+        ("SARVAM_STT_NEGATIVE_SPEECH_THRESHOLD", "negative_speech_threshold", _env_float),
+    ]:
+        val = parser(env_key, None)
+        if val is not None:
+            stt_settings[settings_key] = val
+
     stt = SarvamSTTService(
         api_key=api_key,
-        keepalive_timeout=10.0,
-        keepalive_interval=5.0,
-        settings=SarvamSTTService.Settings(
-            model=os.getenv("SARVAM_STT_MODEL", "saaras:v3"),
-            language=Language.TA_IN,
-            # Let Sarvam's own VAD drive turn boundaries. It segments audio on
-            # its side and pairs each transcript with end-of-speech atomically,
-            # which is far more reliable for short Tamil utterances than a
-            # generic Silero VAD (whose stop triggers a flush that can return
-            # empty for short clips). Silero was dropping the first few turns.
-            vad_signals=True,
-            high_vad_sensitivity=True,
-        ),
+        keepalive_timeout=_env_float("SARVAM_STT_KEEPALIVE_TIMEOUT", 10.0),
+        keepalive_interval=_env_float("SARVAM_STT_KEEPALIVE_INTERVAL", 5.0),
+        settings=SarvamSTTService.Settings(**stt_settings),
     )
 
     # bulbul:v3-beta outputs 24000 Hz, matching PipelineParams.audio_out_sample_rate
     # below. If you switch to bulbul:v2 (22050 Hz), change audio_out_sample_rate too.
-    # min_buffer_size: buffer fewer characters before synthesizing so the first
-    # audio chunk (TTFA) arrives sooner.
+    # min_buffer_size: fewer chars buffered before synthesizing -> faster first audio.
     tts = SarvamTTSService(
         api_key=api_key,
-        sample_rate=int(os.getenv("SARVAM_TTS_SAMPLE_RATE", "24000")),
+        sample_rate=_env_int("SARVAM_TTS_SAMPLE_RATE", 24000),
         settings=SarvamTTSService.Settings(
             model=os.getenv("SARVAM_TTS_MODEL", "bulbul:v3-beta"),
             voice=os.getenv("SARVAM_VOICE", "priya"),
             language=Language.TA_IN,
-            min_buffer_size=12,
+            min_buffer_size=_env_int("SARVAM_TTS_MIN_BUFFER_SIZE", 12),
+            max_chunk_length=_env_int("SARVAM_TTS_MAX_CHUNK_LENGTH", 150),
         ),
     )
 
@@ -226,7 +262,7 @@ async def run_bot(
     user_turn_strategies = UserTurnStrategies(
         stop=[
             SpeechTimeoutUserTurnStopStrategy(
-                user_speech_timeout=0.8,
+                user_speech_timeout=_env_float("TURN_SPEECH_TIMEOUT", 0.8),
                 wait_for_transcript=True,
             ),
             TurnAnalyzerUserTurnStopStrategy(

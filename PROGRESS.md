@@ -153,6 +153,15 @@ Key facts locked in during research:
 - Next steps.
 -->
 
+### 2026-08-25 — Config guide + all tunables exposed as env vars
+- Created `CONFIG.md`: every configurable parameter in plain language — what it does, current value, effect, and experiment range, grouped (LLM / STT / TTS / turn-taking / logging / Vobiz / code-fixed / per-call data).
+- Wired previously-hardcoded tunables to env vars (edit `.env`, no code): `SARVAM_LLM_REASONING_EFFORT|WIKI_GROUNDING|MAX_TOKENS|TEMPERATURE`, `SARVAM_STT_VAD_SIGNALS|HIGH_VAD_SENSITIVITY|KEEPALIVE_*` + fine-grained VAD (`MIN_SPEECH_FRAMES`, `FIRST_TURN_MIN_SPEECH_FRAMES`, `NEGATIVE_FRAMES_COUNT|WINDOW`, `START_SPEECH_VOLUME_THRESHOLD`, `POSITIVE/NEGATIVE_SPEECH_THRESHOLD`), `SARVAM_TTS_MIN_BUFFER_SIZE|MAX_CHUNK_LENGTH`, `TURN_SPEECH_TIMEOUT`, `LOG_LEVEL`.
+- Fine-grained VAD params only sent when set in `.env` (empty = Sarvam defaults); validated saaras:v3-only.
+- **Fixed a latent bug**: `wiki_grounding=Fealse` typo in `bot.py` (would have crashed at call time).
+- `env.example` rewritten with the full matrix + comments; `.env` updated with the new vars (current defaults).
+- Verified: settings resolve from `.env`, compile clean, both modes boot.
+- Next: user experiments via `.env`/`CONFIG.md`; tune STT `negative_frames_*` if end-of-speech feels slow.
+
 ### 2026-08-24 — Latency fix: reply time ~3–6s → bounded
 - User: "each reply takes too long — is it the WebSockets?" Answer: no — the WebSocket/WebRTC transport is ~ms. Verified in source that the delay stacked three AI-stage latencies.
 - **Turn-stop:** the smart-turn stop strategy waits for its analyzer then Sarvam's P99 safety net (`SARVAM_TTFS_P99 = 1.17s`) since Sarvam transcripts aren't `finalized=True`. Added `SpeechTimeoutUserTurnStopStrategy(user_speech_timeout=0.8, wait_for_transcript=True)` as the FIRST stop strategy (transcript-driven — verified it re-arms on `TranscriptionFrame`, so it works with Sarvam VAD); `LocalSmartTurnAnalyzerV3` kept as fallback.
