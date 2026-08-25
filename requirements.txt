@@ -1,0 +1,28 @@
+# Pipecat AI 1.x is required: VAD must be wired on LLMUserAggregatorParams
+# (the transport's `vad_analyzer` is a silent no-op in 1.x).
+# Extras:
+#   websocket  -> telephony (FastAPI WebSocket) transports
+#   sarvam     -> Sarvam STT/LLM/TTS services
+#   silero     -> Silero VAD
+#   webrtc     -> SmallWebRTC (dev browser testing via the dev runner)
+#   runner     -> the dev runner + prebuilt browser UI (dev only)
+pipecat-ai[websocket,sarvam,silero,webrtc,runner]>=1.2.0,<2
+
+# Vobiz telephony integration (from PyPI). 0.0.3 adds L16 + multi-rate +
+# start-event negotiation + stop-event hangup.
+pipecat-vobiz>=0.0.3,<0.1
+
+# Web framework
+fastapi
+uvicorn
+python-multipart
+
+# HTTP clients
+aiohttp
+requests  # used by download_recording.py
+
+# Environment variables
+python-dotenv
+
+# Logging
+loguru
