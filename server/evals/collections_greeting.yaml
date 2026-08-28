@@ -1,0 +1,9 @@
+name: collections_greeting
+judge:
+  eval:
+    factory: judge_factory.deepseek
+    model: deepseek-reasoner
+turns:
+  - expect:
+      - event: response
+        eval: "The bot opens the call by checking the caller's identity (e.g. asks to confirm they are the customer), and does NOT yet reveal the company, the loan, or any amount."

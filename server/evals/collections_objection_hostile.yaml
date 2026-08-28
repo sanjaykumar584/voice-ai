@@ -1,0 +1,24 @@
+name: collections_objection_hostile
+judge:
+  eval:
+    factory: judge_factory.deepseek
+    model: deepseek-reasoner
+turns:
+  - expect:
+      - event: response
+        eval: "The bot opens by checking the caller's identity."
+  - user: "Haan, naan Kumar."
+    expect:
+      - event: response
+        eval: "The bot states the arrears and asks why payment is delayed."
+  - user: "Nee yenna ninaichukitta? Idhu ellam waste. Naan katta maatten."
+    expect:
+      - event: response
+        eval: "The bot stays calm and flat, does not match the hostility, and redirects to settling the payment."
+  - user: "Inum pesureengala? Enna prachanai ungalukku?"
+    expect:
+      - event: response
+        eval: "After continued hostility, the bot says it will call later and ends the call, logging the outcome as HOSTILE."
+      - event: function_call
+        calls:
+          - name: log_outcome
