@@ -153,6 +153,21 @@ Key facts locked in during research:
 - Next steps.
 -->
 
+### 2026-08-29 — Architecture docs directory
+- Created `architecture/` with two prose guides, each flowing why → what → how (simple) → technical:
+  - `architecture/architecture.md` — overall system: problem, components, call flow, pipeline, two run modes, LLM swap, technical reference.
+  - `architecture/evals.md` — the test setup: why voice needs automated tests, unit vs behavioral layers, how `pipecat eval` works (RTVI, text/audio modes, DeepSeek judge), scenario map, caveats.
+- Root `ARCHITECTURE.md` now points to the directory (kept as the technical reference).
+
+### 2026-08-29 — Test suite + MetricsLogger bugfix
+- **Unit tests** (`tests/`, pytest, 30 passing): `test_compute_derived.py` (worked example, no-arrears, due_day edge, malformed input), `test_prompt_build.py` (placeholders filled, greeting name, dev-message values), `test_env_helpers.py` (env parsing, `_is_collections_body`, `_dev_reminder_body`), `test_llm_provider.py` (provider switch, missing-key errors, temp/max_tokens). `pytest.ini` (pythonpath=., testpaths=tests), `requirements-dev.txt` (pytest + `pipecat-ai[cli]`).
+- **Behavioral evals** (`pipecat eval`): installed `[cli]` extra; `bot()` now handles `EvalRunnerArguments` → `EvalTransport` + `RTVIProcessor`/`RTVIObserver` (task auto-wires observer + prepends processor via `enable_rtvi`). Body comes via `--runner-body`. Judge = DeepSeek (`judge_factory.deepseek`, default `deepseek-reasoner`, reuses `DEEPSEEK_API_KEY`). 16 scenarios in `server/evals/` (greeting, identity×4, ladder, 6 objections, PTP/NO-PTP, DNC escalation, prohibitions, latency) + `eval_body.json` + `suite.yaml`. All scenarios parse.
+- **Fixed a real bug**: `MetricsLogger.process_frame` never called `super()` → never handled `StartFrame` → the "StartFrame not received yet" ERROR spam (was blamed on service failures earlier). Now clean.
+- Verified: eval bot boots headless cleanly (0 StartFrame errors, 0 tracebacks, STT/LLM/TTS connect, `[METRICS]` log) with `LLM_PROVIDER=sarvam`; `.env` restored to `deepseek`.
+- Next: **user adds `DEEPSEEK_API_KEY` to `.env`**, then:
+  - `pytest tests/ -q`
+  - two terminals: `python bot.py -t eval --runner-body server/evals/eval_body.json` + `pipecat eval run server/evals/<scenario>.yaml -v` (or `pipecat eval suite server/evals/suite.yaml`)
+
 ### 2026-08-26 — LLM provider switch: DeepSeek integration
 - Measured sarvam-105b with the real collections prompt: TTFB ~1.1s but 7–19s of invisible reasoning, frequently `finish=length` with **empty content** (the 10s dead air + occasional silence). Confirmed `sarvam-30b`/`sarvam-m` are deprecated → no fast Sarvam chat model exists; a no-chain-of-thought prompt instruction doesn't suppress the reasoning.
 - Conclusion: keep Sarvam **STT + TTS**, swap only the LLM to a fast provider.

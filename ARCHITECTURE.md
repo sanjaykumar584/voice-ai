@@ -1,5 +1,9 @@
 # Architecture — Outbound EMI Collections Voice Agent
 
+> Technical reference. For a why→what→how walkthrough, see
+> [`architecture/architecture.md`](architecture/architecture.md) and
+> [`architecture/evals.md`](architecture/evals.md).
+
 > How the whole system fits together: the Pipecat voice pipeline, the two run
 > modes (browser dev / Vobiz phone), the collections logic, and the data flow
 > for a single call. Living document — keep in sync with the code.
