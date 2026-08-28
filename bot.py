@@ -28,7 +28,7 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMUserAggregatorParams,
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
-from pipecat.runner.types import RunnerArguments, SmallWebRTCRunnerArguments
+from pipecat.runner.types import EvalRunnerArguments, RunnerArguments, SmallWebRTCRunnerArguments
 from pipecat.serializers.vobiz import VobizFrameSerializer, parse_vobiz_start
 from pipecat.services.llm_service import FunctionCallParams
 from pipecat.services.sarvam.llm import SarvamLLMService
@@ -119,6 +119,9 @@ class MetricsLogger(FrameProcessor):
     """
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
+        # Must call super() so StartFrame/CancelFrame/lifecycle frames are
+        # handled (sets _started); skipping it made _check_started spam errors.
+        await super().process_frame(frame, direction)
         if isinstance(frame, MetricsFrame):
             for m in frame.data:
                 if isinstance(m, (TTFBMetricsData, TTFAMetricsData, ProcessingMetricsData)):
@@ -227,6 +230,7 @@ async def run_bot(
     handle_sigint: bool,
     body_data: dict | None = None,
     audio_in_sample_rate: int = 8000,
+    rtvi_processor=None,
 ):
     llm = _build_llm()
 
@@ -345,8 +349,9 @@ async def run_bot(
 
     task = PipelineTask(
         pipeline,
+        rtvi_processor=rtvi_processor,  # eval mode: RTVI harness drives the bot
         params=PipelineParams(
-            audio_in_sample_rate=audio_in_sample_rate,  # Vobiz 8kHz mu-law / SmallWebRTC 16kHz
+            audio_in_sample_rate=audio_in_sample_rate,  # Vobiz 8kHz mu-law / SmallWebRTC+eval 16kHz
             audio_out_sample_rate=24000, # Sarvam bulbul:v3-beta native (auto-resampled to the transport rate)
             enable_metrics=True,
             enable_usage_metrics=True,
@@ -391,6 +396,31 @@ async def bot(
     body_data: dict = None,
 ):
     """Main bot entry point compatible with Pipecat Cloud."""
+
+    # Eval harness path (headless behavioral tests): `python bot.py -t eval`
+    # + `pipecat eval run <scenario>.yaml`. Body comes from `--body <file>`.
+    if isinstance(runner_args, EvalRunnerArguments):
+        from pipecat.evals.serializer import RTVIEvalSerializer
+        from pipecat.evals.transport import EvalTransport, EvalTransportParams
+        from pipecat.processors.frameworks.rtvi import RTVIProcessor
+
+        transport = EvalTransport(
+            params=EvalTransportParams(
+                audio_in_enabled=True,
+                audio_out_enabled=True,
+                serializer=RTVIEvalSerializer(),
+            ),
+            host=runner_args.host,
+            port=runner_args.port,
+        )
+        await run_bot(
+            transport,
+            runner_args.handle_sigint,
+            body_data=runner_args.body,
+            audio_in_sample_rate=16000,
+            rtvi_processor=RTVIProcessor(),
+        )
+        return
 
     # Dev-only browser path (no Vobiz): SmallWebRTC via the dev runner.
     # `python bot.py` -> prebuilt UI at http://localhost:7860.

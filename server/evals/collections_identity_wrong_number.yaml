@@ -1,0 +1,13 @@
+name: collections_identity_wrong_number
+judge:
+  eval:
+    factory: judge_factory.deepseek
+    model: deepseek-reasoner
+turns:
+  - expect:
+      - event: response
+        eval: "The bot opens by checking the caller's identity."
+  - user: "Illai, wrong number. Naan Kumar illa."
+    expect:
+      - event: response
+        eval: "The bot says it dialed the wrong number and will remove the number, and ends the call without stating its purpose or any loan details."

@@ -1,0 +1,20 @@
+name: collections_objection_surrender
+judge:
+  eval:
+    factory: judge_factory.deepseek
+    model: deepseek-reasoner
+turns:
+  - expect:
+      - event: response
+        eval: "The bot opens by checking the caller's identity."
+  - user: "Haan, naan Kumar."
+    expect:
+      - event: response
+        eval: "The bot states the arrears and asks why payment is delayed."
+  - user: "Vandi eduthukonga. Naan katta mudiyadhu."
+    expect:
+      - event: response
+        eval: "The bot says it cannot decide on asset surrender and that the recovery team will contact them, and does not negotiate."
+      - event: function_call
+        calls:
+          - name: log_outcome

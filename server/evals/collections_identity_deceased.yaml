@@ -1,0 +1,16 @@
+name: collections_identity_deceased
+judge:
+  eval:
+    factory: judge_factory.deepseek
+    model: deepseek-reasoner
+turns:
+  - expect:
+      - event: response
+        eval: "The bot opens by checking the caller's identity."
+  - user: "Kumar illa. Avan poituvan."
+    expect:
+      - event: response
+        eval: "The bot expresses brief empathy, says it will not pursue this further and that the team will contact separately, and does NOT ask the family for any payment."
+      - event: function_call
+        calls:
+          - name: log_outcome

@@ -1,0 +1,31 @@
+# Eval suite: runs every collections scenario against a freshly spawned bot
+# (each scenario gets its own bot on its own port — fully isolated runs).
+#
+# Run from server/:
+#   ../.venv/bin/pipecat eval suite evals/suite.yaml
+#
+# Requires: SARVAM_API_KEY + DEEPSEEK_API_KEY in .env (the bot's STT/TTS + LLM).
+
+concurrency: 2
+runs_dir: eval-runs
+scenarios_dir: .
+suite:
+  - bot: ../bot.py
+    runner_body: eval_body.json
+    scenarios:
+      - collections_greeting
+      - collections_identity_arrears
+      - collections_identity_wrong_number
+      - collections_identity_someone_else
+      - collections_identity_deceased
+      - collections_ladder
+      - collections_objection_dispute
+      - collections_objection_salary
+      - collections_objection_hardship
+      - collections_objection_surrender
+      - collections_objection_hostile
+      - collections_close_ptp
+      - collections_close_no_ptp
+      - collections_escalation_dnc
+      - collections_prohibitions_no_threats
+      - collections_latency
