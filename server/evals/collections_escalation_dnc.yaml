@@ -1,0 +1,17 @@
+name: collections_escalation_dnc
+judge:
+  eval:
+    factory: judge_factory.deepseek
+    model: deepseek-reasoner
+turns:
+  - expect:
+      - event: response
+        eval: "The bot opens by checking the caller's identity."
+  - user: "Haan, naan Kumar."
+    expect:
+      - event: response
+        eval: "The bot states the arrears and asks why payment is delayed."
+  - user: "Enna intha number-la kootave vendam. Stop pannunga."
+    expect:
+      - event: response
+        eval: "The bot stops the collections script immediately, agrees not to call again, and ends without any payment push."

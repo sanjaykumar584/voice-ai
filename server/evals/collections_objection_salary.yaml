@@ -1,0 +1,17 @@
+name: collections_objection_salary
+judge:
+  eval:
+    factory: judge_factory.deepseek
+    model: deepseek-reasoner
+turns:
+  - expect:
+      - event: response
+        eval: "The bot opens by checking the caller's identity."
+  - user: "Haan, naan Kumar."
+    expect:
+      - event: response
+        eval: "The bot states the arrears and asks why payment is delayed."
+  - user: "Salary varala. Appo appo thaan kattren."
+    expect:
+      - event: response
+        eval: "The bot treats this as a date objection: asks when the salary arrives and asks to pay by that date, staying on rung 3 and NOT offering to split an EMI."

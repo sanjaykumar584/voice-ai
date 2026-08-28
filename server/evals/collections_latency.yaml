@@ -1,0 +1,14 @@
+name: collections_latency
+judge:
+  eval:
+    factory: judge_factory.deepseek
+    model: deepseek-chat
+turns:
+  - expect:
+      - event: response
+        eval: "The bot opens by checking the caller's identity."
+  - user: "Haan, naan Kumar."
+    expect:
+      - event: response
+        within_ms: 8000
+        eval: "The bot acknowledges the identity and continues the conversation."

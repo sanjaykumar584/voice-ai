@@ -1,0 +1,20 @@
+name: collections_objection_dispute
+judge:
+  eval:
+    factory: judge_factory.deepseek
+    model: deepseek-reasoner
+turns:
+  - expect:
+      - event: response
+        eval: "The bot opens by checking the caller's identity."
+  - user: "Haan, naan Kumar."
+    expect:
+      - event: response
+        eval: "The bot states the arrears and asks why payment is delayed."
+  - user: "Naan already kattiten. Record-la paaru."
+    expect:
+      - event: response
+        eval: "The bot says it will log the dispute, asks for the receipt on WhatsApp, says the team will verify and call back, and stops pursuing payment (no re-anchoring, no charges threat)."
+      - event: function_call
+        calls:
+          - name: log_outcome

@@ -1,0 +1,4 @@
+# Dev / test dependencies (not needed in production)
+-r requirements.txt
+pytest
+pipecat-ai[cli]>=1.2.0,<2   # provides the `pipecat eval` command

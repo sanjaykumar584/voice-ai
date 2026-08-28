@@ -1,0 +1,20 @@
+name: collections_close_ptp
+judge:
+  eval:
+    factory: judge_factory.deepseek
+    model: deepseek-reasoner
+turns:
+  - expect:
+      - event: response
+        eval: "The bot opens by checking the caller's identity."
+  - user: "Haan, naan Kumar."
+    expect:
+      - event: response
+        eval: "The bot states the arrears and asks why payment is delayed."
+  - user: "Sari. Innaikku 20000 katturen."
+    expect:
+      - event: response
+        eval: "The bot repeats back the exact commitment (20,000 rupees today), says it will log it, and ends the call."
+      - event: function_call
+        calls:
+          - name: log_outcome

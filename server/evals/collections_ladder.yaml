@@ -1,0 +1,25 @@
+name: collections_ladder
+judge:
+  eval:
+    factory: judge_factory.deepseek
+    model: deepseek-reasoner
+turns:
+  - expect:
+      - event: response
+        eval: "The bot opens by checking the caller's identity."
+  - user: "Haan, naan Kumar."
+    expect:
+      - event: response
+        eval: "The bot states the arrears (8 EMIs pending, around 89,464 rupees) and asks why payment is delayed."
+  - user: "Full-a close panna mudiyadhu. Money illa."
+    expect:
+      - event: response
+        eval: "The bot asks the customer to clear the arrears today (rung 2) rather than closing the whole loan, without skipping ahead."
+  - user: "Innaikku mudiyadhu."
+    expect:
+      - event: response
+        eval: "The bot offers to pay by tomorrow (rung 3), keeping the same arrears amount and flexing only the date."
+  - user: "Naalaikku-um mudiyadhu. Oru EMI kuda kattala."
+    expect:
+      - event: response
+        eval: "The bot proposes paying one EMI today and asks for a date for the rest (rung 4), and does NOT yet mention splitting an EMI into parts."
