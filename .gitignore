@@ -25,6 +25,9 @@ env/
 # Recordings
 recordings/
 
+# Internal planning docs (not for version control)
+plan/
+
 # OS
 .DS_Store
 Thumbs.db
