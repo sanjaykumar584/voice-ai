@@ -153,6 +153,10 @@ Key facts locked in during research:
 - Next steps.
 -->
 
+### 2026-08-29 — README rewritten
+- Replaced the upstream Vobiz example README (outdated: described OpenAI services) with a project README: what the agent is, quick start (browser test), run modes (browser/phone/evals/unit tests), phone-mode curl example, testing commands, config table, project structure, docs links.
+- Verified the eval commands while writing it: `judge_factory` is NOT importable by `pipecat eval run` from the repo root (console script doesn't add cwd to sys.path) → README documents `PYTHONPATH=server/evals` for `eval run`/`eval suite` (verified it resolves the factory).
+
 ### 2026-08-29 — Architecture docs directory
 - Created `architecture/` with two prose guides, each flowing why → what → how (simple) → technical:
   - `architecture/architecture.md` — overall system: problem, components, call flow, pipeline, two run modes, LLM swap, technical reference.
