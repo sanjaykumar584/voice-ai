@@ -96,6 +96,7 @@ so the bot never answers an empty/partial sentence.
 |---|---|---|---|---|
 | `LOG_LEVEL` | `.env` | `INFO` | `INFO` = normal + `[METRICS]` latency lines. `DEBUG` = also prints every transcript and turn frame. | Use `DEBUG` when diagnosing STT/turn problems; it's very noisy for normal use. |
 | `DEV_REMINDER_BODY` | `.env` | mock (Kumar) | Fake call data used by the **browser** test (there's no Vobiz `/start` in that mode). | Change to test different customers/amounts without making a real call. A real `/start` body overrides it. |
+| `BATCH_INPUT_CSV` | `.env` | *(empty → built-in)* | The input spreadsheet `batch_caller.py` reads. | Point it at whichever CSV you're calling from (`callingv1 - Sheet1.csv` etc.). The `--csv` CLI flag overrides it. |
 
 ---
 

@@ -90,8 +90,9 @@ customer (from `DEV_REMINDER_BODY`) is Kumar with ₹89,464 overdue. Watch the
 ### Batch calling (spreadsheet → calls → results)
 
 1. Start the server (phone mode above).
-2. Run the caller against a customer CSV (default:
-   `/home/sanjay/Downloads/callingv1 - Sheet1.csv`):
+2. Point the caller at your sheet — via `BATCH_INPUT_CSV` in `.env`, or
+   `--csv <path>` per run (built-in default: `callingv1 - Sheet1.csv` in
+   Downloads):
 
    ```bash
    .venv/bin/python batch_caller.py --dry-run    # preview mapped calls, no calls
@@ -183,6 +184,7 @@ Key ones:
 
 - [`architecture/architecture.md`](architecture/architecture.md) — why/what/how → technical walkthrough
 - [`architecture/evals.md`](architecture/evals.md) — how testing works
+- [`architecture/batch-calling.md`](architecture/batch-calling.md) — the spreadsheet → calls → results flow
 - [`CONFIG.md`](CONFIG.md) — configuration reference
 - [`PROGRESS.md`](PROGRESS.md) — build log + checklist
 

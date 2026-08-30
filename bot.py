@@ -50,6 +50,7 @@ from pipecat.turns.user_stop.turn_analyzer_user_turn_stop_strategy import (
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
 from collections_logic import build_call_context
+from call_state import active_calls
 
 load_dotenv(override=True)
 
@@ -69,6 +70,15 @@ async def log_outcome(params: FunctionCallParams, status: str, note: str = ""):
         note: Optional note. For PTP, echo the customer's own stated amount and date.
     """
     logger.info(f"[OUTCOME] call outcome: {status} — {note}")
+
+    # Write into the shared call registry (server.py's /calls reads it) so the
+    # batch caller can write the result back to the sheet. app_resources carries
+    # the call_id on the Vobiz path; other paths leave it empty.
+    call_id = (params.app_resources or {}).get("call_id")
+    if call_id and call_id in active_calls:
+        active_calls[call_id]["outcome"] = status
+        active_calls[call_id]["outcome_note"] = note
+
     await params.result_callback({"recorded": True, "status": status})
 
 
@@ -231,6 +241,7 @@ async def run_bot(
     body_data: dict | None = None,
     audio_in_sample_rate: int = 8000,
     rtvi_processor=None,
+    app_resources=None,
 ):
     llm = _build_llm()
 
@@ -350,6 +361,7 @@ async def run_bot(
     task = PipelineTask(
         pipeline,
         rtvi_processor=rtvi_processor,  # eval mode: RTVI harness drives the bot
+        app_resources=app_resources,    # e.g. {"call_id": ...} for outcome capture
         params=PipelineParams(
             audio_in_sample_rate=audio_in_sample_rate,  # Vobiz 8kHz mu-law / SmallWebRTC+eval 16kHz
             audio_out_sample_rate=24000, # Sarvam bulbul:v3-beta native (auto-resampled to the transport rate)
@@ -484,7 +496,14 @@ async def bot(
 
     handle_sigint = runner_args.handle_sigint
 
-    await run_bot(transport, handle_sigint, body_data=body_data)
+    # app_resources: lets the log_outcome tool write the result into server.py's
+    # call registry (same process), which /calls exposes to the batch caller.
+    await run_bot(
+        transport,
+        handle_sigint,
+        body_data=body_data,
+        app_resources={"call_id": call_id},
+    )
 
 
 if __name__ == "__main__":

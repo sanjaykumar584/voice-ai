@@ -1,7 +1,8 @@
 # Architecture — Outbound EMI Collections Voice Agent
 
 > A plain-English-to-technical walkthrough of the whole system.
-> Companion file: [`evals.md`](./evals.md) (how we test it).
+> Companion files: [`evals.md`](./evals.md) (how we test it) and
+> [`batch-calling.md`](./batch-calling.md) (spreadsheet → calls → results).
 
 ---
 

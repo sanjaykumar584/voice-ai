@@ -12,22 +12,23 @@ import os
 import urllib.parse
 from contextlib import asynccontextmanager
 from datetime import datetime
+from pathlib import Path
 
 import aiohttp
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 load_dotenv(override=True)
 
 
 # ----------------- ACTIVE CALLS TRACKING ----------------- #
 
-# Dictionary to store active call information
-# In production, use Redis or a database instead of in-memory dict
-active_calls = {}
+# Shared with bot.py (log_outcome writes outcomes here). In production, use
+# Redis or a database instead of an in-memory dict.
+from call_state import active_calls
 
 
 # ----------------- HELPERS ----------------- #
@@ -269,7 +270,12 @@ async def initiate_outbound_call(request: Request) -> JSONResponse:
                     "status": "initiated",
                     "started_at": datetime.now().isoformat(),
                     "transfer_requested": False,
-                    "websocket": None
+                    "websocket": None,
+                    "phone_number": phone_number,
+                    "body": body_data,
+                    "connected": False,
+                    "outcome": None,
+                    "outcome_note": None,
                 }
                 print(f"[CALL] Pre-registered call {call_uuid} in active_calls")
 
@@ -518,11 +524,18 @@ async def recording_ready(request: Request) -> HTMLResponse:
                 async with session.get(recording_url, headers=headers) as resp:
                     if resp.status == 200:
                         audio_data = await resp.read()
-                        filename = f"recordings/{recording_id}.mp3"
-                        with open(filename, "wb") as f:
+                        filename = f"{recording_id}.mp3"
+                        with open(f"recordings/{filename}", "wb") as f:
                             f.write(audio_data)
-                        print(f"[RECORDING CALLBACK] ✅ Downloaded to {filename}")
+                        print(f"[RECORDING CALLBACK] ✅ Downloaded to recordings/{filename}")
                         print(f"[RECORDING CALLBACK] File size: {len(audio_data)} bytes")
+
+                        # Public URL for the sheet: {PUBLIC_URL}/recordings/<file>
+                        public_base = os.getenv("PUBLIC_URL", "http://localhost:7860").rstrip("/")
+                        if call_uuid and call_uuid in active_calls:
+                            active_calls[call_uuid]["recording_served_url"] = (
+                                f"{public_base}/recordings/{filename}"
+                            )
                     else:
                         print(f"[RECORDING CALLBACK] ❌ Download failed: HTTP {resp.status}")
                         error_text = await resp.text()
@@ -685,6 +698,40 @@ async def get_active_calls() -> JSONResponse:
     })
 
 
+@app.get("/calls")
+async def get_calls() -> JSONResponse:
+    """List every call (history) with outcome + recording, for the batch caller."""
+    calls = []
+    for call_uuid, c in active_calls.items():
+        calls.append(
+            {
+                "call_uuid": call_uuid,
+                "phone_number": c.get("phone_number"),
+                "loanNo": (c.get("body") or {}).get("loanNo"),
+                "status": c.get("status"),
+                "connected": c.get("connected"),
+                "outcome": c.get("outcome"),
+                "outcome_note": c.get("outcome_note"),
+                "recording_id": c.get("recording_id"),
+                "recording_url": c.get("recording_url"),
+                "recording_served_url": c.get("recording_served_url"),
+                "started_at": c.get("started_at"),
+                "ended_at": c.get("ended_at"),
+            }
+        )
+    return JSONResponse({"count": len(calls), "calls": calls})
+
+
+@app.get("/recordings/{filename}")
+async def get_recording(filename: str) -> FileResponse:
+    """Serve a call recording MP3 (used by the sheet's recording column)."""
+    base = Path("recordings").resolve()
+    path = (base / filename).resolve()
+    if not path.is_relative_to(base) or not path.is_file():
+        raise HTTPException(status_code=404, detail="Recording not found")
+    return FileResponse(path, media_type="audio/mpeg", filename=filename)
+
+
 async def handle_vobiz_websocket(
     websocket: WebSocket,
     path: str,
@@ -745,6 +792,7 @@ async def handle_vobiz_websocket(
                 active_calls[call_uuid]["status"] = "active"
                 active_calls[call_uuid]["websocket"] = websocket
                 active_calls[call_uuid]["path"] = path
+                active_calls[call_uuid]["connected"] = True
                 print(f"[CALL] ✅ Updated existing call {call_uuid} with WebSocket")
             else:
                 # Create new entry
@@ -753,7 +801,10 @@ async def handle_vobiz_websocket(
                     "started_at": datetime.now().isoformat(),
                     "path": path,
                     "websocket": websocket,
-                    "transfer_requested": False
+                    "transfer_requested": False,
+                    "connected": True,
+                    "outcome": None,
+                    "outcome_note": None,
                 }
                 print(f"[CALL] ✅ Created new call entry for {call_uuid}")
 
@@ -781,8 +832,8 @@ async def handle_vobiz_websocket(
         except:
             pass
     finally:
-        # Remove call from active_calls when WebSocket closes
-        # BUT: Don't remove if call is being transferred (status == "transferring")
+        # Keep the call record when the WebSocket closes (history for /calls).
+        # BUT: don't end it if the call is being transferred.
         if call_uuid and call_uuid in active_calls:
             call_status = active_calls[call_uuid].get("status", "active")
             if call_status == "transferring":
@@ -790,10 +841,10 @@ async def handle_vobiz_websocket(
                 # Remove websocket reference but keep call record for transfer
                 active_calls[call_uuid]["websocket"] = None
             else:
-                # Normal call end - remove completely
-                del active_calls[call_uuid]
-                print(f"[CALL] 🔴 Removed call UUID: {call_uuid}")
-                print(f"[CALL] Active calls count: {len(active_calls)}")
+                active_calls[call_uuid]["status"] = "ended"
+                active_calls[call_uuid]["ended_at"] = datetime.now().isoformat()
+                active_calls[call_uuid]["websocket"] = None
+                print(f"[CALL] ✅ Call {call_uuid} ended (kept in history)")
 
 
 # Register WebSocket endpoints for common paths Vobiz might use

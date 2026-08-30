@@ -153,6 +153,24 @@ Key facts locked in during research:
 - Next steps.
 -->
 
+### 2026-08-29 — Batch input CSV made configurable
+- `batch_caller.py`: input CSV is no longer hardcoded — resolution order: `--csv` flag → `BATCH_INPUT_CSV` env → built-in Downloads default (`default_csv()`).
+- Added `BATCH_INPUT_CSV=` to `.env` + `env.example`, documented in `CONFIG.md`, `architecture/batch-calling.md`, and the README.
+- Tests: 3 new `default_csv` cases (48 total passing); verified env override + fallback via dry-run.
+
+### 2026-08-29 — Batch-calling developer doc
+- Added `architecture/batch-calling.md`: developer guide for the batch layer — flow diagram, component responsibilities, `call_state`/`app_resources` plumbing, CSV→body mapping table, result columns + `derive_result` branches, run flags, safety/edge cases, endpoints, testing, known limitations.
+- Linked from `architecture/architecture.md` and the README docs section.
+
+### 2026-08-29 — Batch calling implemented (plan/batch-calling.md)
+- **`call_state.py`** — shared in-process call registry (avoids the server↔bot import cycle).
+- **`server.py`**: keeps ended calls in history (`status: "ended"`, `connected`, `outcome`, `outcome_note`, `ended_at`); `POST /start` records phone + body; `/recording-ready` stores `recording_served_url`; new **`GET /calls`** (history with outcome/recording) and **`GET /recordings/{file}`** (path-traversal-guarded MP3 serving).
+- **`bot.py`**: `run_bot` accepts `app_resources` → `PipelineTask`; Vobiz path passes `{"call_id": …}`; `log_outcome` writes status/note into `call_state.active_calls` (verified the framework threads `app_resources` into `FunctionCallParams`).
+- **`batch_caller.py`**: loads the CSV (`/home/sanjay/Downloads/callingv1 - Sheet1.csv`), maps rows (phone→+91, DD/MM/YYYY→ISO, decimal `pos`→int, `loanNo` last-4), places 1 call at a time via `POST /start`, polls `GET /calls`, writes `outcome/outcome_note/recording/call_status/called_at/call_uuid` back into the same CSV (timestamped backup, atomic rewrite, resume-safe). Flags: `--dry-run`, `--limit`, `--from`, `--force`, `--delay`, `--timeout`, `--poll-interval`. 8AM–7PM IST guard.
+- **Tests**: `tests/test_batch_mapper.py` (mapping/phone/date/derive-result/IST) + `tests/test_outcome_store.py` (log_outcome writes to the registry). 45 passing.
+- Verified: dry-run maps all 176 rows cleanly; `/calls` + `/recordings` work; traversal guard 404s.
+- **README reverted by git flow** → rewrote it (now includes batch calling). Live batch run still blocked on a Vobiz number.
+
 ### 2026-08-29 — Architecture docs directory
 - Created `architecture/` with two prose guides, each flowing why → what → how (simple) → technical:
   - `architecture/architecture.md` — overall system: problem, components, call flow, pipeline, two run modes, LLM swap, technical reference.
