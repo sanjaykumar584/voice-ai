@@ -45,7 +45,7 @@ curl /batch/{id} ──► progress          curl /batch/{id}/export ──► r
 | `batch_api.py` | The HTTP router (`/batch/*`); real dialer (Vobiz) or mock |
 | `batch_runner.py` | Import CSV → jobs; the run loop; finalize/retry; export; mock dialer |
 | `db.py` | psycopg access to Supabase Postgres (campaigns/jobs/calls/… helpers) |
-| `storage.py` | Upload MP3s to the `recordings` bucket + short-lived signed URLs |
+| `scripts/download_recording.py` | Fetch a recorded MP3 from Vobiz by `RecordingID` (recordings are not stored locally) |
 | `vobiz_api.py` | The Vobiz REST "place a call" helper |
 | `server.py` | Hosts the API + the call/WebSocket lifecycle (writes connect/end to the DB) |
 | `bot.py` | `log_outcome` writes the outcome (and escalations) to the DB |
@@ -89,8 +89,8 @@ so a call can be replayed/audited.
 - every dial creates a `calls` row and ends it ~`MOCK_CALL_DURATION`s later,
 - outcomes rotate `PTP → NO_PTP → NO_ANSWER → DISPUTE → HARDSHIP → …` (so
   retries and escalations are exercised), and
-- connected calls upload a tiny dummy recording to Storage (if configured) so
-  signed URLs flow through the export.
+- connected calls get a mock `recording_id`/`recording_url` reference so the
+  export shape matches real calls.
 
 The whole import → run → export loop is testable with zero calls.
 
@@ -111,7 +111,7 @@ curl -o results.csv http://localhost:7860/batch/<campaign_id>/export
 ```
 
 Results CSV columns: `loanNo, customerName, phone, outcome, outcome_note,
-recording (signed URL), call_status, attempts, called_at, call_uuid`.
+recording (Vobiz URL), recording_id, call_status, attempts, called_at, call_uuid`.
 
 > A legacy CSV-only CLI (`scripts/batch_caller_cli.py --csv …`, in-memory flow) still
 > exists for the older single-server behavior; new work should use the API + DB.
@@ -121,8 +121,9 @@ recording (signed URL), call_status, attempts, called_at, call_uuid`.
 - **Resume**: the worker only claims `pending`/`scheduled` jobs; a crashed run
   simply continues on restart (`claim_next_due_job` is atomic + `SKIP LOCKED`).
 - **One campaign runs at a time** (in-process guard); volume is <100/day.
-- **Recordings**: MP3s → `recordings` bucket; the CSV gets a **signed URL** that
-  expires (`RECORDING_SIGNED_URL_TTL`). Regenerate from `calls.recording_key`.
+- **Recordings**: Vobiz keeps the audio; the CSV carries `recording_id` +
+  Vobiz's `recording_url` (needs Vobiz auth to download — see
+  `scripts/download_recording.py`).
 - **State**: DB is truth; `call_state` resets with the process (WS lookups).
 - **Outcome fidelity**: connected-but-no-`log_outcome` calls are marked
   `NO_OUTCOME` — a prompt/eval problem to chase via the evals suite.

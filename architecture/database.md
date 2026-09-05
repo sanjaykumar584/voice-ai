@@ -97,8 +97,8 @@ create table calls (
                        'SURRENDER','HOSTILE','WRONG_NUMBER','NO_OUTCOME','NO_ANSWER')),
   outcome_note text,
   error text,                                  -- start/poll failure reason
-  recording_key text,                          -- Storage path, e.g. recordings/<id>.mp3
-  recording_served_url text,                   -- signed URL (short-lived, regenerated)
+  recording_id text,                          -- Vobiz's RecordingID (reference only)
+  recording_url text,                          -- Vobiz's RecordUrl (reference only)
   duration_secs int,
   cost_estimate numeric(10,4),
   started_at timestamptz,
@@ -159,17 +159,18 @@ create index idx_blocklist_phone      on blocklist(tenant_id, phone);
 
 ---
 
-## 4. Storage bucket (recordings)
+## 4. Recordings (no local storage)
 
-```bash
-# local Supabase: create the private bucket via the dashboard
-# (Storage → New bucket → name: recordings, Public: OFF)
-```
+Recordings are **not downloaded or stored by this app** — Vobiz keeps the audio
+and calls its `/recording-ready` webhook with `RecordingID` + `RecordUrl`.
+We persist only those two references on the `calls` row:
 
-- MP3s upload to `recordings/<call_id>.mp3`.
-- `calls.recording_served_url` holds a **signed URL** (short expiry, e.g. 1h) —
-  generated on demand with the service_role key, so the sheet's link never
-  exposes the raw bucket.
+- `calls.recording_id` — Vobiz's recording ID
+- `calls.recording_url` — Vobiz's URL (requires Vobiz auth headers to download;
+  fetch any file with `scripts/download_recording.py <RecordingID>`)
+
+If you later want app-owned files, add a Supabase Storage/S3 bucket and upload
+from the `/recording-ready` handler.
 
 ---
 
@@ -179,7 +180,7 @@ create index idx_blocklist_phone      on blocklist(tenant_id, phone);
 |---|---|
 | **Import** (`POST /batch/import`) | 1 `campaigns` row + 1 `call_jobs` row per CSV row (`body` = mapped collections body); blocklist check marks `blocked` |
 | **Worker** (`POST /batch/{id}/run`) | picks `call_jobs` where `status in (pending,scheduled) and next_attempt_at <= now` → creates a `calls` row → dials → polls |
-| **Call end** (`server.py` + `bot.py`) | `calls.status='ended'`, `connected`, `outcome`, `outcome_note` (from `log_outcome`), `recording_key` + signed URL; escalation flags → `escalations` |
+| **Call end** (`server.py` + `bot.py`) | `calls.status='ended'`, `connected`, `outcome`, `outcome_note` (from `log_outcome`), `recording_id` + Vobiz `recording_url`; escalation flags → `escalations` |
 | **Retry** | `NO_ANSWER`/`FAILED` → `call_jobs.attempts+1`; if `< max_attempts` → `status='scheduled'`, `next_attempt_at = next day`; else `status='completed'`, `last_outcome` set |
 | **Export** (`GET /batch/{id}/export`) | join `call_jobs` + `calls` → the same CSV columns as today |
 

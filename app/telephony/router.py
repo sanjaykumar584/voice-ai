@@ -386,7 +386,12 @@ async def recording_finished(request: Request) -> HTMLResponse:
 
 @router.api_route("/recording-ready", methods=["GET", "POST"])
 async def recording_ready(request: Request) -> HTMLResponse:
-    """Called by Vobiz when recording file is ready to download (via callbackUrl)"""
+    """Called by Vobiz when the recording is available (via callbackUrl).
+
+    Recordings stay on Vobiz's side — we only persist the reference
+    (RecordingID + RecordUrl) on the call row. The URL requires Vobiz auth
+    headers to download; use scripts/download_recording.py to fetch by ID.
+    """
     print("\n[RECORDING CALLBACK] ========== RECORDING FILE READY ==========")
 
     # Vobiz sends form data
@@ -396,52 +401,28 @@ async def recording_ready(request: Request) -> HTMLResponse:
     recording_id = data.get("RecordingID")
     call_uuid = data.get("CallUUID")
 
-    print(f"[RECORDING CALLBACK] Recording file is ready for download!")
+    print(f"[RECORDING CALLBACK] Recording available!")
     print(f"[RECORDING CALLBACK] URL: {recording_url}")
     print(f"[RECORDING CALLBACK] Recording ID: {recording_id}")
     print(f"[RECORDING CALLBACK] Call UUID: {call_uuid}")
 
-    # Auto-download the recording file with authentication
-    if recording_url and recording_id:
+    if recording_url and recording_id and call_uuid:
+        # In-memory registry (legacy REST surface).
+        if call_uuid in active_calls:
+            active_calls[call_uuid]["recording_id"] = recording_id
+            active_calls[call_uuid]["recording_url"] = recording_url
+            print(f"[RECORDING CALLBACK] ✅ Stored recording {recording_id} for call {call_uuid}")
+
+        # Supabase: persist the reference on the calls row (batch export reads it).
         try:
-            # Create recordings directory if it doesn't exist
-            os.makedirs("recordings", exist_ok=True)
+            from app.calls import repo as _repo
 
-            # Get Vobiz credentials for authenticated download
-            auth_id = os.getenv("VOBIZ_AUTH_ID")
-            auth_token = os.getenv("VOBIZ_AUTH_TOKEN")
-
-            headers = {
-                "X-Auth-ID": auth_id,
-                "X-Auth-Token": auth_token,
-            }
-
-            print(f"[RECORDING CALLBACK] Downloading recording...")
-
-            async with aiohttp.ClientSession() as session:
-                async with session.get(recording_url, headers=headers) as resp:
-                    if resp.status == 200:
-                        audio_data = await resp.read()
-                        filename = f"{recording_id}.mp3"
-                        with open(f"recordings/{filename}", "wb") as f:
-                            f.write(audio_data)
-                        print(f"[RECORDING CALLBACK] ✅ Downloaded to recordings/{filename}")
-                        print(f"[RECORDING CALLBACK] File size: {len(audio_data)} bytes")
-
-                        # Public URL for the sheet: {PUBLIC_URL}/recordings/<file>
-                        public_base = os.getenv("PUBLIC_URL", "http://localhost:7860").rstrip("/")
-                        if call_uuid and call_uuid in active_calls:
-                            active_calls[call_uuid]["recording_served_url"] = (
-                                f"{public_base}/recordings/{filename}"
-                            )
-                    else:
-                        print(f"[RECORDING CALLBACK] ❌ Download failed: HTTP {resp.status}")
-                        error_text = await resp.text()
-                        print(f"[RECORDING CALLBACK] Error: {error_text}")
+            if _repo.is_configured():
+                _repo.update_call_by_vobiz_uuid(
+                    call_uuid, recording_id=str(recording_id), recording_url=str(recording_url)
+                )
         except Exception as e:
-            print(f"[RECORDING CALLBACK] ❌ Error downloading recording: {e}")
-            import traceback
-            print(f"[RECORDING CALLBACK] Traceback:\n{traceback.format_exc()}")
+            print(f"[RECORDING CALLBACK] DB update skipped: {e}")
 
     print("[RECORDING CALLBACK] ========== RECORDING FILE READY END ==========\n")
 

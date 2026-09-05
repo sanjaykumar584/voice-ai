@@ -33,8 +33,8 @@ _ALLOWED_UPDATE_COLUMNS = {
         "outcome",
         "outcome_note",
         "error",
-        "recording_key",
-        "recording_served_url",
+        "recording_id",
+        "recording_url",
         "duration_secs",
         "cost_estimate",
         "started_at",
@@ -327,7 +327,8 @@ def campaign_rows_for_export(campaign_id: str) -> list[dict]:
             SELECT j.loan_no, j.customer_name, j.phone, j.agent_name,
                    j.status AS job_status, j.blocklist_hit, j.attempts,
                    j.last_outcome, j.created_at AS job_created_at,
-                   c.outcome, c.outcome_note, c.recording_served_url,
+                   c.outcome, c.outcome_note,
+                   c.recording_id, c.recording_url,
                    c.started_at, c.ended_at, c.vobiz_call_uuid
             FROM call_jobs j
             LEFT JOIN LATERAL (

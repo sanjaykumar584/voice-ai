@@ -153,6 +153,15 @@ Key facts locked in during research:
 - Next steps.
 -->
 
+### 2026-09-06 — Recordings: link-only (no local disk, no Storage)
+- Decision: recordings stay with Vobiz; the app persists only `RecordingID` + Vobiz `RecordUrl` on the `calls` row. Removed the local `recordings/` disk download and the Supabase Storage path entirely.
+- `app/telephony/router.py` `/recording-ready`: no longer downloads — stores `recording_id` + `recording_url` to the DB (via `update_call_by_vobiz_uuid`) and the in-memory registry.
+- Schema: migration `0002_recording_references.sql` (drop `recording_key/recording_served_url`, add `recording_id/recording_url`); `0001` updated for fresh installs; applied to the local DB.
+- Removed `GET /recordings/{file}` (404 now) + the `app/storage/` module + Storage env vars (`SUPABASE_API_URL`, `SUPABASE_SECRET_KEY`, `RECORDING_BUCKET`, `RECORDING_SIGNED_URL_TTL`).
+- Mock dialer writes mock `recording_id`/`recording_url` (no upload); batch export now has `recording` (Vobiz URL) + `recording_id` columns; `/calls`, mapper, repo aligned on `recording_url`.
+- `scripts/download_recording.py` now accepts a `RecordingID` (builds the authed media URL) — the documented way to fetch any MP3 with Vobiz creds.
+- Docs updated (README, CONFIG.md §10, architecture/batch-calling + database). Full suite **60 passing**; verified boot, `/recordings/*` 404, and the new export shape in mock mode.
+
 ### 2026-09-06 — Production-oriented package refactor (app/)
 - Reorganized the flat root modules into a domain-oriented `app/` package (pure reorg, behavior unchanged):
   - `app/voice/` — services (LLM factory), pipeline (run_bot), tools (log_outcome/end_call), metrics_logger, transports (`bot()` dispatch), collections (prompt + derived math).

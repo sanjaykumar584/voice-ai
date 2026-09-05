@@ -91,7 +91,7 @@ def test_row_to_body_missing_fields():
 
 def test_derive_result_outcome():
     rec = {"status": "ended", "connected": True, "outcome": "PTP",
-           "outcome_note": "20000 on 2026-08-29", "recording_served_url": "http://x/recordings/a.mp3"}
+           "outcome_note": "20000 on 2026-08-29", "recording_url": "http://x/recordings/a.mp3"}
     assert derive_result(rec) == ("ENDED", "PTP", "20000 on 2026-08-29", "http://x/recordings/a.mp3")
 
 

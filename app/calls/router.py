@@ -1,10 +1,10 @@
-"""Call-state REST surface (in-memory registry view)."""
+"""Call-state REST surface (in-memory registry view).
 
-import os
-from pathlib import Path
+Recordings are NOT stored here — call rows carry Vobiz recording_id/url only.
+"""
 
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 
 from app.calls.registry import active_calls
 
@@ -50,21 +50,10 @@ async def get_calls() -> JSONResponse:
                 "outcome_note": c.get("outcome_note"),
                 "recording_id": c.get("recording_id"),
                 "recording_url": c.get("recording_url"),
-                "recording_served_url": c.get("recording_served_url"),
                 "started_at": c.get("started_at"),
                 "ended_at": c.get("ended_at"),
             }
         )
     return JSONResponse({"count": len(calls), "calls": calls})
-
-
-@router.get("/recordings/{filename}")
-async def get_recording(filename: str) -> FileResponse:
-    """Serve a call recording MP3 (used by the sheet's recording column)."""
-    base = Path("recordings").resolve()
-    path = (base / filename).resolve()
-    if not path.is_relative_to(base) or not path.is_file():
-        raise HTTPException(status_code=404, detail="Recording not found")
-    return FileResponse(path, media_type="audio/mpeg", filename=filename)
 
 

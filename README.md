@@ -93,8 +93,8 @@ State lives in **Supabase Postgres** (tables in `supabase/migrations/`); the
 CSV is import/export only. Setup:
 
 ```bash
-supabase start    # local Supabase (Postgres + Storage)
-supabase status   # → copy DATABASE_URL, API URL + Secret key into .env
+supabase start    # local Supabase (Postgres; tables in supabase/migrations/)
+supabase status   # → copy DATABASE_URL into .env
 ```
 
 Then, with `server.py` running, trigger a batch over HTTP:
@@ -118,8 +118,8 @@ curl -o results.csv http://localhost:7860/batch/<campaign_id>/export
   errors retry in 10 min.
 - Escalation outcomes (HARDSHIP/DECEASED/SURRENDER/HOSTILE/DISPUTE) land in the
   `escalations` table.
-- Recordings upload to the Supabase `recordings` bucket; the CSV gets a
-  short-lived **signed URL**.
+- Recordings **stay on Vobiz** — the DB/CSV carry `recording_id` + the Vobiz
+  `recording_url` (fetch any MP3 with `scripts/download_recording.py`).
 - `MOCK_CALLS=true` in `.env` simulates calls (no dialing) — test the whole
   flow locally without a Vobiz number.
 - Details: [`architecture/batch-calling.md`](architecture/batch-calling.md) +
@@ -196,7 +196,7 @@ Key ones:
 │   │                       #   cache), router.py (/calls REST surface)
 │   ├── batch/              # api.py (/batch/*), runner.py (worker + retries),
 │   │                       #   dialer.py (real/mock), mapper.py (CSV mapping)
-│   └── storage/recordings.py  # Recording uploads + signed URLs
+│   (recordings stay on Vobiz — no local/storage module)
 ├── evals/                  # Behavioral eval scenarios + judge factory + suite
 ├── scripts/                # Legacy CLI (batch_caller_cli) + download_recording
 ├── tests/{unit,integration}/ # pytest suites (DB tests skip w/o Supabase)

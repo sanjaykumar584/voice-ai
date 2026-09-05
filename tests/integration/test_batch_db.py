@@ -25,9 +25,7 @@ def campaign_id():
 
 
 def _disable_storage(monkeypatch):
-    """Keep runner tests deterministic: no real Storage uploads."""
-    monkeypatch.delenv("SUPABASE_API_URL", raising=False)
-    monkeypatch.delenv("SUPABASE_SECRET_KEY", raising=False)
+    """Keep mock calls fast for tests."""
     monkeypatch.setenv("MOCK_CALL_DURATION", "0.05")
 
 

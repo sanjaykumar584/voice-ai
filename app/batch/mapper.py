@@ -87,7 +87,7 @@ def derive_result(rec: dict) -> tuple[str, str, str, str]:
         return "FAILED", "", "", ""
     outcome = (rec.get("outcome") or "").strip()
     note = (rec.get("outcome_note") or "").strip()
-    recording = (rec.get("recording_served_url") or "").strip()
+    recording = (rec.get("recording_url") or "").strip()
     if outcome:
         return "ENDED", outcome, note, recording
     if rec.get("connected"):

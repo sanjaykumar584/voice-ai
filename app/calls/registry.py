@@ -7,7 +7,7 @@ resolve them to the DB key.
 
 call_uuid -> dict with keys: status, started_at, ended_at, phone_number, body,
 connected, outcome, outcome_note, recording_id, recording_url,
-recording_served_url, transfer_requested, websocket, path
+recording_url, transfer_requested, websocket, path
 """
 
 active_calls: dict[str, dict] = {}

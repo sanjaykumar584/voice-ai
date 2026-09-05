@@ -52,19 +52,10 @@ async def _mock_end_call(call_id: str, job: dict) -> None:
     if outcome == "NO_ANSWER":
         fields = {"status": "ended", "connected": False, "ended_at": _utcnow()}
     if fields.get("connected"):
-        # Optionally exercise the real Storage path with a tiny dummy file.
-        try:
-            from app.storage import recordings as storage
-
-            if storage.is_configured():
-                key = f"{call_id}.mp3"  # upload_bytes prefixes the bucket
-                storage.upload_bytes(key, b"mock-audio")
-                url = storage.signed_url(key)
-                if url:
-                    fields["recording_key"] = key
-                    fields["recording_served_url"] = url
-        except Exception as e:
-            logger.warning(f"[batch] mock recording upload skipped: {e}")
+        # Recordings stay on the provider (like real Vobiz calls) — mock calls
+        # only carry a reference id/url so export shape matches real calls.
+        fields["recording_id"] = f"mock-{call_id}"
+        fields["recording_url"] = f"mock://recordings/{call_id}.mp3"
     db.update_call(call_id, **fields)
 
 

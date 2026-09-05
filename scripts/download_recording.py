@@ -74,7 +74,15 @@ def download_recording(url: str, filename: str = None) -> str:
 
 
 if __name__ == "__main__":
-    # Example URL from user
-    url = "https://media.vobiz.ai/v1/Account/auth id /Recording/call uuid.mp3"
-    
+    import sys
+
+    # usage: python scripts/download_recording.py <RecordingID or full URL>
+    if len(sys.argv) > 1:
+        arg = sys.argv[1]
+        url = arg if arg.startswith("http") else (
+            f"https://media.vobiz.ai/v1/Account/{AUTH_ID}/Recording/{arg}.mp3"
+        )
+    else:
+        url = "https://media.vobiz.ai/v1/Account/auth id /Recording/call uuid.mp3"
+
     download_recording(url)

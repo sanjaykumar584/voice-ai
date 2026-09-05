@@ -21,9 +21,6 @@ FIXTURE = Path(__file__).resolve().parent.parent / "data" / "calling_small.csv"
 def client(monkeypatch):
     monkeypatch.setenv("MOCK_CALLS", "true")
     monkeypatch.setenv("MOCK_CALL_DURATION", "0.05")
-    # No real Storage uploads during API tests.
-    monkeypatch.delenv("SUPABASE_API_URL", raising=False)
-    monkeypatch.delenv("SUPABASE_SECRET_KEY", raising=False)
     with TestClient(create_app()) as c:
         yield c
 

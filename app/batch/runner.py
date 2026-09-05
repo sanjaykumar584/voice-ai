@@ -225,7 +225,8 @@ def export_campaign_csv(campaign_id: str) -> bytes:
     """Results CSV for a campaign (the sheet's outcome columns)."""
     cols = [
         "loanNo", "customerName", "phone", "outcome", "outcome_note",
-        "recording", "call_status", "attempts", "called_at", "call_uuid",
+        "recording", "recording_id", "call_status", "attempts", "called_at",
+        "call_uuid",
     ]
     buf = io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=cols, extrasaction="ignore")
@@ -238,7 +239,8 @@ def export_campaign_csv(campaign_id: str) -> bytes:
                 "phone": r.get("phone") or "",
                 "outcome": (r.get("outcome") or r.get("last_outcome") or ""),
                 "outcome_note": r.get("outcome_note") or "",
-                "recording": r.get("recording_served_url") or "",
+                "recording": r.get("recording_url") or "",
+                "recording_id": r.get("recording_id") or "",
                 "call_status": r.get("job_status") or "",
                 "attempts": r.get("attempts") or 0,
                 "called_at": _iso(r.get("ended_at") or r.get("started_at")),
