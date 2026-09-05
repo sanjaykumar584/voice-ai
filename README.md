@@ -87,28 +87,46 @@ customer (from `DEV_REMINDER_BODY`) is Kumar with ₹89,464 overdue. Watch the
 > `.venv/bin/python bot.py` and `.venv/bin/python server.py` both use port
 > **7860** — run one at a time.
 
-### Batch calling (spreadsheet → calls → results)
+### Batch calling (spreadsheet → calls → results, via API + Supabase)
 
-1. Start the server (phone mode above).
-2. Point the caller at your sheet — via `BATCH_INPUT_CSV` in `.env`, or
-   `--csv <path>` per run (built-in default: `callingv1 - Sheet1.csv` in
-   Downloads):
+State lives in **Supabase Postgres** (tables in `supabase/migrations/`); the
+CSV is import/export only. Setup:
 
-   ```bash
-   .venv/bin/python batch_caller.py --dry-run    # preview mapped calls, no calls
-   .venv/bin/python batch_caller.py --limit 2    # place 2 calls, then stop
-   .venv/bin/python batch_caller.py              # full run (1 call at a time)
-   ```
+```bash
+supabase start    # local Supabase (Postgres + Storage)
+supabase status   # → copy DATABASE_URL, API URL + Secret key into .env
+```
 
-   For each row it maps the sheet to the collections body (phone → +91, dates →
-   ISO, `loanNo` last-4), places the call, waits for it to finish, and writes
-   these columns back into the **same CSV**: `outcome`, `outcome_note`,
-   `recording` (served URL), `call_status`, `called_at`, `call_uuid`.
+Then, with `server.py` running, trigger a batch over HTTP:
 
-   Resume-safe: rows that already have an `outcome` are skipped, so an
-   interrupted run continues where it left off. A timestamped backup is made
-   before the first write. Calls are only placed 8:00–19:00 IST unless you pass
-   `--force`. Full plan: `plan/batch-calling.md`.
+```bash
+# 1. Upload the spreadsheet → campaign + jobs created (blocklist applied)
+curl -F "file=@callingv1 - Sheet1.csv" http://localhost:7860/batch/import
+# → {"campaign_id": "...", "imported": 176, "blocked": 0}
+
+# 2. Fire the calls (background worker, one at a time)
+curl -X POST http://localhost:7860/batch/<campaign_id>/run
+
+# 3. Watch progress
+curl http://localhost:7860/batch/<campaign_id>
+
+# 4. Download the results CSV (outcome, note, signed recording URL…)
+curl -o results.csv http://localhost:7860/batch/<campaign_id>/export
+```
+
+- Retries: `NO_ANSWER` auto-reschedules next day up to `max_attempts`; dial
+  errors retry in 10 min.
+- Escalation outcomes (HARDSHIP/DECEASED/SURRENDER/HOSTILE/DISPUTE) land in the
+  `escalations` table.
+- Recordings upload to the Supabase `recordings` bucket; the CSV gets a
+  short-lived **signed URL**.
+- `MOCK_CALLS=true` in `.env` simulates calls (no dialing) — test the whole
+  flow locally without a Vobiz number.
+- Details: [`architecture/batch-calling.md`](architecture/batch-calling.md) +
+  [`architecture/database.md`](architecture/database.md).
+
+The older CSV-only CLI (`batch_caller.py --csv …`) still works for the
+in-memory flow.
 
 ---
 
@@ -159,6 +177,8 @@ Key ones:
 | `PUBLIC_URL` | ngrok URL for Vobiz webhooks + served recording URLs (phone mode) |
 | `DEV_REMINDER_BODY` | Mock customer for the browser test |
 | `LOG_LEVEL` | `INFO` (+`[METRICS]`) · `DEBUG` (transcripts/turn frames) |
+| `DATABASE_URL` / `SUPABASE_API_URL` / `SUPABASE_SECRET_KEY` | Supabase Postgres + Storage (batch calling) |
+| `MOCK_CALLS` | `true` = simulate calls (no dialing) for local testing |
 
 ---
 
@@ -166,14 +186,20 @@ Key ones:
 
 ```
 ├── bot.py                 # Pipeline, transports (webrtc/vobiz/eval), tools, greeting
-├── server.py              # Vobiz webhook host: /start, /answer, /ws, /recording-*, /calls, /recordings
-├── call_state.py          # Shared call registry (server.py + bot.py outcomes)
-├── batch_caller.py        # Batch calls from a CSV, writes results back
+├── server.py              # Vobiz webhook host + /batch/* API routes
+├── batch_api.py           # HTTP API to trigger batch calling
+├── batch_runner.py        # Batch worker: import CSV, dial jobs, retries, export
+├── db.py                  # Supabase Postgres access (psycopg)
+├── storage.py             # Supabase Storage: recording uploads + signed URLs
+├── vobiz_api.py           # Vobiz REST call helper
+├── call_state.py          # In-memory registry (live WebSocket lookups only)
+├── batch_caller.py        # Legacy CSV-only CLI (in-memory flow)
 ├── collections_logic.py   # The collections script (prompt template) + overdue math
 ├── download_recording.py  # Recording download helper
-├── tests/                 # pytest unit tests
+├── tests/                 # pytest unit + integration tests
 ├── server/evals/          # Behavioral eval scenarios + judge factory + suite
-├── architecture/          # Plain-English docs: architecture.md, evals.md
+├── supabase/migrations/   # DB schema (0001_batch_calling.sql)
+├── architecture/          # Plain-English docs
 ├── plan/                  # Internal planning docs (gitignored)
 ├── CONFIG.md              # Every tunable explained
 ├── requirements.txt       # Production deps

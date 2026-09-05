@@ -1,51 +1,40 @@
 # Batch Calling — Spreadsheet → Calls → Results
 
-> Developer guide for `batch_caller.py` and the outcome-capture plumbing.
-> Read [`architecture.md`](./architecture.md) first if you're new to the project.
+> Developer guide for the `/batch/*` API and the Supabase-backed batch flow.
+> Read [`architecture.md`](./architecture.md) and
+> [`database.md`](./database.md) (schema) first.
 
 ---
 
 ## 1. What it is (and why)
 
-The agent makes **one** call per `POST /start`. A collections team doesn't fire
-calls one by one — they have a **spreadsheet of customers** (`callingv1 - Sheet1.csv`
-in Downloads: loan number, name, phone, EMI, due dates…) and want:
+A collections team has a **spreadsheet of customers** and wants:
 
 1. a call placed to **every row**,
-2. the **outcome** of each call (PTP / NO_PTP / HARDSHIP / DISPUTE / …) written
-   **back into the sheet**,
+2. the **outcome** of each call written back (PTP / NO_PTP / HARDSHIP / …),
 3. the **recording** reachable per row.
 
-Batch calling is the glue that does that: it reads the CSV, drives the existing
-phone-mode server one call at a time, and writes the results back.
+Batch calling is the HTTP API that does this. It is triggered by **uploading
+the CSV** — state lives in **Supabase Postgres**, the CSV is import/export
+only, and (for testing) `MOCK_CALLS=true` simulates calls without dialing.
 
 ---
 
 ## 2. The end-to-end flow
 
 ```
-batch_caller.py                  server.py (the bot host)            Vobiz / bot
-───────────────                  ───────────────────────             ──────────
-load callingv1.csv
-  for each row:
-    map row → collections body ──► POST /start ──────────────────────► Vobiz dials
-                                      │  (call record created in call_state)
-    poll GET /calls ◄───────────────  │                              caller answers
-                                      │                              bot runs script
-                                      ▼                              log_outcome tool
-                                 call_state[call]["outcome"] ◄─────────────────┘
-                                      │  (recording URL added by /recording-ready)
-    call ends → read outcome + recording
-    write columns back to the CSV (backup first, atomic rewrite)
+curl -F file=@sheet.csv ──► POST /batch/import ──► campaigns + call_jobs (blocklist applied)
+curl -X POST /batch/{id}/run ──► background worker (one call at a time)
+      │  picks next due job ──► creates a `calls` row ──► dials (real or MOCK_CALLS)
+      │                                                 │
+      │        real: Vobiz → WS → bot → log_outcome ────┤ writes outcome to the DB
+      │        mock: scripted outcome after ~1.5s ──────┘
+      ▼
+  finalize: complete / reschedule (NO_ANSWER → next day, ≤ max_attempts)
+            + escalation rows for HARDSHIP/DECEASED/SURRENDER/HOSTILE/DISPUTE
+      ▼
+curl /batch/{id} ──► progress          curl /batch/{id}/export ──► results CSV
 ```
-
-Two moving pieces make the outcome loop work:
-
-- **`log_outcome` (bot side)** — when the LLM decides the call's result, the
-  tool writes `{outcome, outcome_note}` into the shared registry keyed by
-  `call_id`.
-- **`GET /calls` (server side)** — exposes every call record (status, outcome,
-  recording URL) so the batch caller can read the result and continue.
 
 ---
 
@@ -53,173 +42,99 @@ Two moving pieces make the outcome loop work:
 
 | File | Role |
 |---|---|
-| `batch_caller.py` | The driver: CSV → calls → results back into the CSV |
-| `server.py` | Hosts `/start`, `/calls`, `/recordings`; keeps call history |
-| `call_state.py` | The shared in-process registry (`active_calls`) — **the memory between bot and server** |
-| `bot.py` | Passes `app_resources={"call_id": …}`; `log_outcome` writes outcomes into `call_state` |
-| `tests/test_batch_mapper.py` | Unit tests for the CSV→body mapping + result derivation |
-| `tests/test_outcome_store.py` | Unit tests that `log_outcome` writes to the registry |
+| `batch_api.py` | The HTTP router (`/batch/*`); real dialer (Vobiz) or mock |
+| `batch_runner.py` | Import CSV → jobs; the run loop; finalize/retry; export; mock dialer |
+| `db.py` | psycopg access to Supabase Postgres (campaigns/jobs/calls/… helpers) |
+| `storage.py` | Upload MP3s to the `recordings` bucket + short-lived signed URLs |
+| `vobiz_api.py` | The Vobiz REST "place a call" helper |
+| `server.py` | Hosts the API + the call/WebSocket lifecycle (writes connect/end to the DB) |
+| `bot.py` | `log_outcome` writes the outcome (and escalations) to the DB |
+| `call_state.py` | **In-memory only** for live WebSocket lookups — the DB is the source of truth |
+| `tests/test_batch_db.py`, `tests/test_batch_api.py` | DB/runner + HTTP integration tests (skip without Supabase) |
 
-### Why `call_state.py` exists
+### Why separate `jobs` from `calls`?
 
-`server.py` and `bot.py` run in the **same process** but importing each other
-would be a circular import. `call_state.py` is a tiny dependency-free module
-both import — `server.py` reads it for `/calls`, `bot.py` writes to it from
-`log_outcome`.
-
-### How the call_id reaches the tool
-
-```
-server.py: /start → call_uuid stored in call_state
-      │
-      ▼
-bot():   run_bot(app_resources={"call_id": call_uuid})
-      │
-      ▼
-PipelineTask(app_resources=…) → LLM service → FunctionCallParams.app_resources
-      │
-      ▼
-log_outcome: call_state[call_id]["outcome"] = status
-```
-
-(Verified in the framework: `PipelineTask(app_resources=…)` is threaded into
-every tool handler's `params.app_resources`.)
+`call_jobs` = one row per **customer** (the intent + retry state);
+`calls` = one row per **dial attempt**. A retry is a new `calls` row — the job
+just counts attempts. Schema details: [`database.md`](./database.md).
 
 ---
 
-## 4. The CSV mapping (row → collections body)
-
-| CSV column | Body key | Transformation |
-|---|---|---|
-| `phoneNo` | (not in body) | `normalize_phone`: 10-digit → `+91…`; keeps `+`/`00` prefixes |
-| `loanNo` | `account_number_last4` | last 4 characters |
-| `customerName` | `customer_name` | stripped (keeps internal double spaces) |
-| `bank` | `company_name` | |
-| `agentName` | `agent_name` | the bot persona |
-| `pos` | `principal` | `int(float(...))` — handles `81144.58` |
-| `installmentAmount` | `emi` | `int(float(...))` |
-| `emiStartDate` | `first_due_date` | `DD/MM/YYYY` → `YYYY-MM-DD` (the bot's math needs ISO) |
-| `tenor` | `tenor_months` | `int(float(...))` |
-| `noOfEmisReceived` | `emis_received` | `int(float(...))` |
-| `loanNo` (again) | `loanNo` | echoed through for `/calls` correlation + review |
-
-All mapping lives in `row_to_body()` (unit-tested).
-
----
-
-## 5. Result columns written back
-
-Appended to the **same CSV** after each call (columns added if missing):
-
-| Column | Meaning |
-|---|---|
-| `outcome` | `PTP` / `NO_PTP` / `DISPUTE` / `HARDSHIP` / `DECEASED` / `SURRENDER` / `HOSTILE` / `WRONG_NUMBER` / `NO_OUTCOME` (from the bot's `log_outcome`) |
-| `outcome_note` | The tool's note (e.g. the customer's stated PTP amount + date) |
-| `recording` | Served URL: `{PUBLIC_URL}/recordings/<id>.mp3` (localhost fallback) |
-| `call_status` | `ENDED` / `NO_ANSWER` / `FAILED` / `TIMEOUT` |
-| `called_at` | IST timestamp when the call finished |
-| `call_uuid` | Vobiz call UUID (correlates with `/calls`) |
-
-### How `call_status` is derived (`derive_result`)
-
-| `/calls` record | call_status | outcome |
-|---|---|---|
-| `status: ended` + `outcome` set | `ENDED` | the outcome |
-| `status: ended`, connected, no outcome | `ENDED` | `NO_OUTCOME` (answered, never logged — review) |
-| `status: ended`, **not** connected | `NO_ANSWER` | — |
-| `status: failed` | `FAILED` | — |
-| poll timed out | `TIMEOUT` | — |
-
----
-
-## 6. Running it
-
-Prereq: `server.py` up (phone mode) + a Vobiz number in `VOBIZ_PHONE_NUMBER`.
-
-```bash
-# preview — prints every mapped call, places nothing
-.venv/bin/python batch_caller.py --dry-run
-
-# place 2 calls then stop (sanity check first)
-.venv/bin/python batch_caller.py --limit 2
-
-# full run — 1 call at a time, results written back as it goes
-.venv/bin/python batch_caller.py
-```
-
-Flags:
-
-| Flag | Default | Purpose |
-|---|---|---|
-| `--csv` | `BATCH_INPUT_CSV` env → built-in Downloads path | Input CSV |
-| `--server` | `http://localhost:7860` | Bot server base URL |
-| `--from-number` | `VOBIZ_PHONE_NUMBER` env | Caller-ID |
-| `--dry-run` | off | Print mapped calls, place none |
-| `--limit N` | none | Stop after N calls |
-| `--from N` | 0 | Start at 0-based row index |
-| `--force` | off | Allow calls outside 8:00–19:00 IST |
-| `--delay` | 2.0 s | Pause between calls |
-| `--timeout` | 600 s | Max wait for one call to finish |
-| `--poll-interval` | 5.0 s | `/calls` poll cadence |
-
----
-
-## 7. Safety & edge cases (important)
-
-- **Resume-safe**: rows with a non-empty `outcome` are skipped. Kill it mid-run,
-  restart — it continues where it left off.
-- **Backup**: a timestamped copy of the CSV is made before the first write;
-  every write is atomic (write `.tmp` → `os.replace`).
-- **Calling hours**: outside 8:00–19:00 IST it refuses (unless `--force`).
-  Compliance for outbound India calls (TRAI/DLT) is the operator's
-  responsibility — the bot never calls on its own.
-- **No phone** → row skipped (counted in the summary).
-- **Start failure / no `call_uuid`** → row marked `FAILED` with the reason.
-- **Recording may lag the hangup** — `/recording-ready` fires shortly after;
-  the `recording` column is only filled once the server has the file.
-- **State is in-memory**: `call_state` resets when `server.py` restarts. If you
-  restart the server mid-batch, `POST /start` still works, but previously
-  finished calls vanish from `/calls` (their CSV rows are already written —
-  that's why the sheet is the source of truth).
-- **176 rows ≈ hours** at ~2 min/call, one at a time. Concurrency is
-  intentionally 1 (telephony-safe); raise later if Vobiz concurrency allows.
-
----
-
-## 8. Server endpoints the batch caller relies on
+## 4. The API
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /start` | Places the call; body `{phone_number, body, from_number}`; returns `call_uuid` |
-| `GET /calls` | History: `{count, calls: [{call_uuid, phone_number, loanNo, status, connected, outcome, outcome_note, recording_id, recording_url, recording_served_url, started_at, ended_at}]}` |
-| `GET /recordings/{file}` | Serves the MP3 (path-traversal guarded) |
+| `POST /batch/import` | Multipart `.csv` upload → campaign + jobs; returns `{campaign_id, imported, blocked, skipped_no_phone}` |
+| `POST /batch/{campaign_id}/run` | Starts the background worker (202-style `{"status":"started"}`); `?dry_run=true` counts due jobs instead |
+| `GET /batch/{campaign_id}` | Progress: campaign status, job-status counts, outcome breakdown |
+| `GET /batch/{campaign_id}/export` | Downloads the results CSV |
+| `GET /batch` | List campaigns |
 
----
+Worker rules: dials one at a time, re-checks the **blocklist** right before
+dialing, waits up to `BATCH_CALL_TIMEOUT`, marks `NO_ANSWER` for a **next-day
+retry** (`BATCH_RETRY_MINUTES_NO_ANSWER`) up to `max_attempts` (default 3),
+retries dial errors in 10 minutes, and finishes the campaign when no job is due.
 
-## 9. Testing the batch layer
+## 5. CSV mapping (unchanged from the CLI era)
+
+Same columns as `batch_caller.py`: `phoneNo` → `+91…`, `emiStartDate` → ISO,
+decimal `pos` → int, `loanNo` last-4 → `account_number_last4`, plus the other
+script variables. The full mapped object is stored in `call_jobs.body` (jsonb)
+so a call can be replayed/audited.
+
+## 6. Mock mode (testing without Vobiz)
+
+`MOCK_CALLS=true` in `.env` makes the worker **not dial**:
+
+- every dial creates a `calls` row and ends it ~`MOCK_CALL_DURATION`s later,
+- outcomes rotate `PTP → NO_PTP → NO_ANSWER → DISPUTE → HARDSHIP → …` (so
+  retries and escalations are exercised), and
+- connected calls upload a tiny dummy recording to Storage (if configured) so
+  signed URLs flow through the export.
+
+The whole import → run → export loop is testable with zero calls.
+
+## 7. Running it
 
 ```bash
-.venv/bin/python -m pytest tests/test_batch_mapper.py tests/test_outcome_store.py -q
+# 1. Local Supabase up (Postgres + Storage), tables migrated, .env filled:
+#    DATABASE_URL, SUPABASE_API_URL, SUPABASE_SECRET_KEY (supabase status)
+# 2. Start the server:
+.venv/bin/python server.py
+
+# 3. Trigger a batch (mock or real per MOCK_CALLS / VOBIZ creds):
+curl -F "file=@/home/sanjay/Downloads/callingv1 - Sheet1.csv" \
+     http://localhost:7860/batch/import
+curl -X POST http://localhost:7860/batch/<campaign_id>/run
+curl    http://localhost:7860/batch/<campaign_id>
+curl -o results.csv http://localhost:7860/batch/<campaign_id>/export
 ```
 
-- Mapper: int/date/phone parsing, `row_to_body`, `derive_result` (all branches),
-  IST timezone.
-- Outcome store: `log_outcome` writes into `call_state` only when a matching
-  `call_id` is present; safe otherwise.
+Results CSV columns: `loanNo, customerName, phone, outcome, outcome_note,
+recording (signed URL), call_status, attempts, called_at, call_uuid`.
 
-**What can't be unit-tested**: the live Vobiz round trip. Dry-run + a
-`--limit 2` call to your own phone is the real verification (needs a Vobiz
-number — still missing in `.env`).
+> A legacy CSV-only CLI (`batch_caller.py --csv …`, in-memory flow) still exists
+> for the older single-server behavior; new work should use the API + DB.
 
----
+## 8. Edge cases & notes
 
-## 10. Known limitations / next steps
+- **Resume**: the worker only claims `pending`/`scheduled` jobs; a crashed run
+  simply continues on restart (`claim_next_due_job` is atomic + `SKIP LOCKED`).
+- **One campaign runs at a time** (in-process guard); volume is <100/day.
+- **Recordings**: MP3s → `recordings` bucket; the CSV gets a **signed URL** that
+  expires (`RECORDING_SIGNED_URL_TTL`). Regenerate from `calls.recording_key`.
+- **State**: DB is truth; `call_state` resets with the process (WS lookups).
+- **Outcome fidelity**: connected-but-no-`log_outcome` calls are marked
+  `NO_OUTCOME` — a prompt/eval problem to chase via the evals suite.
+- **Calling hours** are not enforced by this layer yet (client guard in the
+  legacy CLI) — a production hook: refuse `/batch/*/run` outside 8–19 IST.
 
-- Blocked on a **Vobiz number** for a live end-to-end run.
-- `call_state` is in-memory → swap to Redis/DB for production so history
-  survives restarts and multi-worker hosts.
-- No retry-on-`NO_ANSWER` policy yet (e.g. auto re-call next day) — the sheet's
-  `outcome` column is the hook for that.
-- `NO_OUTCOME` (answered but nothing logged) is a signal to tune the prompt or
-  check the call — the evals suite (`architecture/evals.md`) is the place to
-  guard against that class of bug.
+## 9. Testing
+
+```bash
+.venv/bin/python -m pytest tests/test_batch_db.py tests/test_batch_api.py -q
+```
+
+Both skip automatically when local Supabase isn't reachable. What can't be
+tested without a Vobiz number: the real dial + WebSocket lifecycle (the mock
+covers everything around it).

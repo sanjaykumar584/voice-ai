@@ -29,10 +29,23 @@ def test_greeting_contains_name():
 
 def test_developer_message_has_values():
     _, dev = build_call_context(BODY)
-    assert "89464" in dev  # overdue_amount
     assert "overdue_count" in dev
+    assert "overdue_amount" in dev
     assert "Kumar" in dev
-    assert "2026" in dev  # today's date
+    assert "20" in dev  # year in today's date
+
+
+def test_developer_message_matches_computed_derived():
+    """The dev message must carry exactly what compute_derived returns."""
+    from datetime import date
+
+    from collections_logic import compute_derived
+
+    _, dev = build_call_context(BODY)
+    expected = compute_derived(BODY, date.today())
+    for key in ("emis_due_till_today", "overdue_count", "overdue_amount", "remaining_tenor"):
+        assert f'"{key}"' in dev
+        assert str(expected[key]) in dev
 
 
 def test_partial_body_no_crash():

@@ -195,6 +195,12 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+# Batch-calling API (Supabase-backed). Imported here (no cycle: batch_api only
+# depends on db/batch_runner/call_state).
+import batch_api
+
+app.include_router(batch_api.router)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Allow all origins for testing
@@ -808,6 +814,15 @@ async def handle_vobiz_websocket(
                 }
                 print(f"[CALL] ✅ Created new call entry for {call_uuid}")
 
+            # Persist connect to Supabase (batch-driven calls have a DB row keyed
+            # by the same uuid). No-op when the DB isn't configured.
+            try:
+                import db as _db
+                if _db.is_configured():
+                    _db.update_call_by_vobiz_uuid(call_uuid, status="active", connected=True)
+            except Exception as e:
+                print(f"[CALL] DB update on connect skipped: {e}")
+
             print(f"[CALL] Active calls count: {len(active_calls)}")
         else:
             print("[CALL] ⚠️  No call UUID found in URL query params")
@@ -845,6 +860,31 @@ async def handle_vobiz_websocket(
                 active_calls[call_uuid]["ended_at"] = datetime.now().isoformat()
                 active_calls[call_uuid]["websocket"] = None
                 print(f"[CALL] ✅ Call {call_uuid} ended (kept in history)")
+
+        # Persist end to Supabase so the batch worker can finalize the job.
+        # The WS query params may lack the uuid, so fall back to matching the
+        # live registry entry by websocket object.
+        try:
+            import db as _db
+            if _db.is_configured():
+                resolved = call_uuid
+                if not (resolved and resolved in active_calls):
+                    resolved = next(
+                        (k for k, v in active_calls.items() if v.get("websocket") is websocket),
+                        None,
+                    )
+                if resolved:
+                    entry = active_calls.get(resolved) or {}
+                    # Don't finalize transfers in the DB (call continues on another leg).
+                    if entry.get("status") != "transferring":
+                        _db.update_call_by_vobiz_uuid(
+                            resolved,
+                            status="ended",
+                            ended_at=datetime.now(),
+                            connected=entry.get("connected", True),
+                        )
+        except Exception as e:
+            print(f"[CALL] DB update on close skipped: {e}")
 
 
 # Register WebSocket endpoints for common paths Vobiz might use

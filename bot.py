@@ -71,13 +71,27 @@ async def log_outcome(params: FunctionCallParams, status: str, note: str = ""):
     """
     logger.info(f"[OUTCOME] call outcome: {status} — {note}")
 
-    # Write into the shared call registry (server.py's /calls reads it) so the
-    # batch caller can write the result back to the sheet. app_resources carries
-    # the call_id on the Vobiz path; other paths leave it empty.
+    # In-memory registry (server.py /calls + /active-calls, legacy CSV flow).
     call_id = (params.app_resources or {}).get("call_id")
     if call_id and call_id in active_calls:
         active_calls[call_id]["outcome"] = status
         active_calls[call_id]["outcome_note"] = note
+
+    # Supabase: write to the calls row (batch-driven calls keyed by the Vobiz
+    # uuid) and escalate compliance-flagged outcomes. No-op when unconfigured
+    # or when the call has no DB row (browser/eval/single /start calls).
+    try:
+        import db as _db
+        if _db.is_configured() and call_id:
+            row = _db.get_call_by_vobiz_uuid(call_id)
+            if row:
+                _db.update_call(row["id"], outcome=status, outcome_note=note)
+                if status in _db.ESCALATION_OUTCOMES:
+                    _db.insert_escalation(
+                        call_id=row["id"], job_id=row["job_id"], flag=status, note=note
+                    )
+    except Exception as e:
+        logger.warning(f"[OUTCOME] DB write skipped: {e}")
 
     await params.result_callback({"recorded": True, "status": status})
 

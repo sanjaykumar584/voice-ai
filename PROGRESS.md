@@ -153,6 +153,16 @@ Key facts locked in during research:
 - Next steps.
 -->
 
+### 2026-09-06 — Supabase batch-calling API implemented + fully tested
+- New modules: `db.py` (psycopg → local Supabase Postgres; typed helpers for campaigns/jobs/calls/blocklist/escalations/audit/export), `storage.py` (Storage REST upload + signed URLs, POST semantics + apikey header for local Supabase), `vobiz_api.py` (Vobiz REST helper), `batch_runner.py` (import_csv_bytes, atomic claim loop, finalize/retry, mock dialer with rotating outcomes, export), `batch_api.py` (FastAPI router: `/batch/import|run|{id}|{id}/export`).
+- `server.py`: includes the router; WS lifecycle now persists `active`/`ended` to the DB (resolved by vobiz uuid, transfer-safe). `bot.py` `log_outcome` writes outcome + escalations rows to the DB (no-op when unconfigured). `db.delete_campaign` + `count_due_jobs` added.
+- `.env`/`env.example`/`CONFIG.md`: `DATABASE_URL`, `SUPABASE_API_URL`, `SUPABASE_SECRET_KEY`, `RECORDING_BUCKET`, `RECORDING_SIGNED_URL_TTL`, `MOCK_CALLS`, `MOCK_CALL_DURATION`, `BATCH_*` knobs. `psycopg[binary]` added to requirements.
+- **Verified end-to-end (mock mode)**: import 6-row fixture → run → 5 completed + 1 NO_ANSWER scheduled for retry; varied outcomes (PTP/NO_PTP/DISPUTE/HARDSHIP); DISPUTE+HARDSHIP escalation rows; export CSV carries outcomes + signed Storage recording URLs. Cleaned all test data.
+- **Tests**: `tests/conftest.py` (db skip machinery + `db` marker registered in pytest.ini), `tests/test_batch_db.py` (crud/import/mock-run/retry-exhaust/dial-error/blocklist/escalation), `tests/test_batch_api.py` (import→run→status→export, bad file, 404s, dry-run). Full suite: **60 passing** (DB tests skip cleanly when Supabase is down). Fixed a date-dependent prompt test (worked-example amount moves as "today" advances).
+- Fixed along the way: mock recording key double-bucketed; Storage PUT→POST + `apikey` header (local Supabase requires it).
+- Docs updated: README (API triggers), CONFIG.md (§10 Supabase/batch), `architecture/batch-calling.md` rewritten for the API+DB design.
+- Next: real dials once a Vobiz number is bought (`MOCK_CALLS=` off).
+
 ### 2026-08-31 — Database design doc + migration
 - `architecture/database.md`: full Supabase DB design — table purposes, copy-paste SQL (campaigns / call_jobs / calls / blocklist / escalations / audit_log + indexes), apply instructions, Storage bucket note, flow mapping, integration notes.
 - Saved the same schema as `supabase/migrations/0001_batch_calling.sql` (replays via `supabase db reset`).

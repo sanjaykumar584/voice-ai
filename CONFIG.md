@@ -161,4 +161,25 @@ computes the rest itself (never asks the LLM to do arithmetic).
 
 ---
 
+## 10. Supabase & batch calling (the `/batch/*` API)
+
+| Parameter | Where | Current | What it does | How to tune |
+|---|---|---|---|---|
+| `DATABASE_URL` | `.env` | local Supabase Postgres | Where campaigns/jobs/calls live. | From `supabase status` → "URL" under Database. |
+| `SUPABASE_API_URL` | `.env` | `http://127.0.0.1:54321` | Base URL for Storage uploads/signing. | From `supabase status` → Project URL. |
+| `SUPABASE_SECRET_KEY` | `.env` | *(set from `supabase status`)* | Storage auth (secret key). | From `supabase status` → Authentication Keys → Secret. |
+| `RECORDING_BUCKET` | `.env` | `recordings` | Storage bucket for call MP3s (created automatically). | |
+| `RECORDING_SIGNED_URL_TTL` | `.env` | `3600` | Seconds a recording link stays valid. | Lower = more secure but links expire sooner. |
+| `MOCK_CALLS` | `.env` | *(empty)* | `true` = simulate calls with scripted outcomes — no dialing, no Vobiz. | Use for local testing of the whole flow. |
+| `MOCK_CALL_DURATION` | `.env` | `1.5` | Seconds a mock call "lasts". | Lower for faster test runs. |
+| `BATCH_POLL_INTERVAL` | `.env` | `2.0` | Seconds between DB polls while waiting for a call. | |
+| `BATCH_CALL_TIMEOUT` | `.env` | `600` | Max seconds to wait for one call before marking it `TIMEOUT`. | |
+| `BATCH_RETRY_MINUTES_NO_ANSWER` | `.env` | `1440` | When a `NO_ANSWER` is retried (default: next day). | |
+| `BATCH_RETRY_MINUTES_DIAL_ERROR` | `.env` | `10` | When a dial failure is retried. | |
+
+Trigger a batch: `POST /batch/import` (upload CSV) → `POST /batch/{id}/run` →
+`GET /batch/{id}` → `GET /batch/{id}/export`. See `architecture/batch-calling.md`.
+
+---
+
 *Keep `CONFIG.md` in sync with `env.example` and `bot.py` when you add knobs.*
