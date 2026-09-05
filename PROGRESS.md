@@ -153,6 +153,12 @@ Key facts locked in during research:
 - Next steps.
 -->
 
+### 2026-08-31 — Database design doc + migration
+- `architecture/database.md`: full Supabase DB design — table purposes, copy-paste SQL (campaigns / call_jobs / calls / blocklist / escalations / audit_log + indexes), apply instructions, Storage bucket note, flow mapping, integration notes.
+- Saved the same schema as `supabase/migrations/0001_batch_calling.sql` (replays via `supabase db reset`).
+- Linked from `architecture/architecture.md` + README docs.
+- Decisions: local Supabase only, psycopg direct, RLS off (tenant_id ready), recordings → Supabase Storage + signed URLs.
+
 ### 2026-08-29 — Batch input CSV made configurable
 - `batch_caller.py`: input CSV is no longer hardcoded — resolution order: `--csv` flag → `BATCH_INPUT_CSV` env → built-in Downloads default (`default_csv()`).
 - Added `BATCH_INPUT_CSV=` to `.env` + `env.example`, documented in `CONFIG.md`, `architecture/batch-calling.md`, and the README.

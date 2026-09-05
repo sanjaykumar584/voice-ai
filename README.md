@@ -185,6 +185,7 @@ Key ones:
 - [`architecture/architecture.md`](architecture/architecture.md) — why/what/how → technical walkthrough
 - [`architecture/evals.md`](architecture/evals.md) — how testing works
 - [`architecture/batch-calling.md`](architecture/batch-calling.md) — the spreadsheet → calls → results flow
+- [`architecture/database.md`](architecture/database.md) — Supabase schema (copy-paste SQL)
 - [`CONFIG.md`](CONFIG.md) — configuration reference
 - [`PROGRESS.md`](PROGRESS.md) — build log + checklist
 
