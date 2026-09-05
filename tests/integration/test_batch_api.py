@@ -9,12 +9,12 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-import db
-from server import app
+from app.calls import repo as db
+from app.main import create_app
 
 pytestmark = pytest.mark.db
 
-FIXTURE = Path(__file__).parent / "data" / "calling_small.csv"
+FIXTURE = Path(__file__).resolve().parent.parent / "data" / "calling_small.csv"
 
 
 @pytest.fixture()
@@ -24,7 +24,7 @@ def client(monkeypatch):
     # No real Storage uploads during API tests.
     monkeypatch.delenv("SUPABASE_API_URL", raising=False)
     monkeypatch.delenv("SUPABASE_SECRET_KEY", raising=False)
-    with TestClient(app) as c:
+    with TestClient(create_app()) as c:
         yield c
 
 

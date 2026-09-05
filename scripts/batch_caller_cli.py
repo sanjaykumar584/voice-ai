@@ -26,102 +26,21 @@ from datetime import datetime, time as dtime, timedelta, timezone
 import requests
 from dotenv import load_dotenv
 
-load_dotenv()  # VOBIZ_PHONE_NUMBER etc.
-
-DEFAULT_CSV = "/home/sanjay/Downloads/callingv1 - Sheet1.csv"
-DEFAULT_SERVER = "http://localhost:7860"
-
-RESULT_COLUMNS = ["outcome", "outcome_note", "recording", "call_status", "called_at", "call_uuid"]
-
-CALLING_START = dtime(8, 0)
-CALLING_END = dtime(19, 0)
-
-
-def default_csv() -> str:
-    """Input CSV: --csv flag wins, else BATCH_INPUT_CSV from .env, else DEFAULT_CSV."""
-    return os.getenv("BATCH_INPUT_CSV", "").strip() or DEFAULT_CSV
-
-
-# ----------------------------- mapping helpers ----------------------------- #
-
-
-def _to_int(value) -> int:
-    """Robust int parse: handles '81144.58', '', None."""
-    if value in (None, ""):
-        return 0
-    return int(float(str(value).strip()))
-
-
-def _to_iso(dd_mm_yyyy) -> str:
-    """DD/MM/YYYY -> YYYY-MM-DD. Passes already-ISO through; empty stays empty."""
-    s = str(dd_mm_yyyy or "").strip()
-    if not s:
-        return ""
-    if "/" in s:
-        d, m, y = [p.strip() for p in s.split("/")]
-        return f"{y}-{m.zfill(2)}-{d.zfill(2)}"
-    return s
-
-
-def normalize_phone(phone) -> str:
-    """10-digit Indian number -> +91.... Keeps existing +/00 prefixes."""
-    s = str(phone or "").strip().replace(" ", "").replace("-", "")
-    if s.startswith("+"):
-        return s
-    if s.startswith("00"):
-        return "+" + s[2:]
-    if len(s) == 10 and s.isdigit():
-        return "+91" + s
-    return s
-
-
-def row_to_body(row: dict) -> dict:
-    """Map a CSV row to the collections body the bot expects."""
-    return {
-        "agent_name": str(row.get("agentName", "") or "").strip(),
-        "company_name": str(row.get("bank", "") or "").strip(),
-        "customer_name": str(row.get("customerName", "") or "").strip(),
-        "account_number_last4": str(row.get("loanNo", "") or "").strip()[-4:],
-        "principal": _to_int(row.get("pos")),
-        "emi": _to_int(row.get("installmentAmount")),
-        "first_due_date": _to_iso(row.get("emiStartDate")),
-        "tenor_months": _to_int(row.get("tenor")),
-        "emis_received": _to_int(row.get("noOfEmisReceived")),
-        "loanNo": str(row.get("loanNo", "") or "").strip(),
-    }
-
-
-def derive_result(rec: dict) -> tuple[str, str, str, str]:
-    """Map a GET /calls record to (call_status, outcome, outcome_note, recording)."""
-    status = rec.get("status")
-    if status == "timeout":
-        return "TIMEOUT", "", "", ""
-    if status == "failed":
-        return "FAILED", "", "", ""
-    outcome = (rec.get("outcome") or "").strip()
-    note = (rec.get("outcome_note") or "").strip()
-    recording = (rec.get("recording_served_url") or "").strip()
-    if outcome:
-        return "ENDED", outcome, note, recording
-    if rec.get("connected"):
-        return "ENDED", "NO_OUTCOME", "", recording
-    return "NO_ANSWER", "", "", recording
-
-
-# ------------------------------- time helpers ------------------------------- #
-
-
-IST = timezone(timedelta(hours=5, minutes=30))
-
-
-def ist_now() -> datetime:
-    """Current time in IST (UTC+5:30)."""
-    return datetime.now(IST)
-
-
-def within_calling_hours(now: datetime) -> bool:
-    return CALLING_START <= now.time() <= CALLING_END
-
+from app.batch.mapper import (
+    DEFAULT_CSV,
+    DEFAULT_SERVER,
+    RESULT_COLUMNS,
+    CALLING_START,
+    CALLING_END,
+    default_csv,
+    ist_now,
+    within_calling_hours,
+    to_int,
+    to_iso,
+    normalize_phone,
+    row_to_body,
+    derive_result,
+)
 
 # -------------------------------- CSV helpers ------------------------------- #
 

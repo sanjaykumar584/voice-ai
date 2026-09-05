@@ -14,7 +14,7 @@
 ## 1. How to experiment (quick workflow)
 
 1. Edit a value in `.env`.
-2. Restart the bot (`Ctrl+C`, then `python bot.py -t webrtc`).
+2. Restart the bot (`Ctrl+C`, then `.venv/bin/python -m app.bot -t webrtc`).
 3. Talk to it at `http://localhost:7860` and watch the `[METRICS]` lines.
 4. Change one value at a time so you know what moved the needle.
 
@@ -96,11 +96,11 @@ so the bot never answers an empty/partial sentence.
 |---|---|---|---|---|
 | `LOG_LEVEL` | `.env` | `INFO` | `INFO` = normal + `[METRICS]` latency lines. `DEBUG` = also prints every transcript and turn frame. | Use `DEBUG` when diagnosing STT/turn problems; it's very noisy for normal use. |
 | `DEV_REMINDER_BODY` | `.env` | mock (Kumar) | Fake call data used by the **browser** test (there's no Vobiz `/start` in that mode). | Change to test different customers/amounts without making a real call. A real `/start` body overrides it. |
-| `BATCH_INPUT_CSV` | `.env` | *(empty → built-in)* | The input spreadsheet `batch_caller.py` reads. | Point it at whichever CSV you're calling from (`callingv1 - Sheet1.csv` etc.). The `--csv` CLI flag overrides it. |
+| `BATCH_INPUT_CSV` | `.env` | *(empty → built-in)* | The input spreadsheet the legacy `scripts/batch_caller_cli.py` reads. | Point it at whichever CSV you're calling from (`callingv1 - Sheet1.csv` etc.). The `--csv` CLI flag overrides it. |
 
 ---
 
-## 7. Vobiz telephony (phone mode only — `python server.py`)
+## 7. Vobiz telephony (phone mode only — `python -m app.server`)
 
 | Parameter | Current | What it does |
 |---|---|---|
@@ -133,7 +133,7 @@ These are intentionally tied to the transport/script and don't have env vars:
 | Smart-turn fallback | enabled | Backup "user finished talking" detector. |
 | Tools (`log_outcome`, `end_call`) | — | The script's reporting + graceful hang-up. |
 | Speak-first greeting | on connect | Identity step fires without waiting for the caller. |
-| Collections script + variables | — | Lives in `collections_logic.py` (system prompt template + `compute_derived`). |
+| Collections script + variables | — | Lives in `app/voice/collections.py` (system prompt template + `compute_derived`). |
 
 ---
 
@@ -154,7 +154,7 @@ computes the rest itself (never asks the LLM to do arithmetic).
 | `tenor_months` | Total loan tenure in months. |
 | `emis_received` | Number of EMIs paid so far. |
 
-**Derived automatically** (`collections_logic.compute_derived`):
+**Derived automatically** (`app/voice/collections.compute_derived`):
 `emis_due_till_today`, `overdue_count`, `overdue_amount` (overdue_count × emi),
 `remaining_tenor`, `has_arrears`. If `has_arrears` is false, the script logs
 `NO ARREARS` and ends politely.

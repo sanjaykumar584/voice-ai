@@ -177,11 +177,11 @@ create index idx_blocklist_phone      on blocklist(tenant_id, phone);
 
 | Step | Writes |
 |---|---|
-| **Import** (`batch_caller.py import`) | 1 `campaigns` row + 1 `call_jobs` row per CSV row (`body` = mapped collections body); blocklist check marks `blocked` |
-| **Worker** (`batch_caller.py run`) | picks `call_jobs` where `status in (pending,scheduled) and next_attempt_at <= now` → creates a `calls` row → dials → polls |
+| **Import** (`POST /batch/import`) | 1 `campaigns` row + 1 `call_jobs` row per CSV row (`body` = mapped collections body); blocklist check marks `blocked` |
+| **Worker** (`POST /batch/{id}/run`) | picks `call_jobs` where `status in (pending,scheduled) and next_attempt_at <= now` → creates a `calls` row → dials → polls |
 | **Call end** (`server.py` + `bot.py`) | `calls.status='ended'`, `connected`, `outcome`, `outcome_note` (from `log_outcome`), `recording_key` + signed URL; escalation flags → `escalations` |
 | **Retry** | `NO_ANSWER`/`FAILED` → `call_jobs.attempts+1`; if `< max_attempts` → `status='scheduled'`, `next_attempt_at = next day`; else `status='completed'`, `last_outcome` set |
-| **Export** (`batch_caller.py export`) | join `call_jobs` + `calls` → the same CSV columns as today |
+| **Export** (`GET /batch/{id}/export`) | join `call_jobs` + `calls` → the same CSV columns as today |
 
 ---
 
@@ -197,5 +197,5 @@ create index idx_blocklist_phone      on blocklist(tenant_id, phone);
 - **Timestamps** are UTC (`timestamptz`); display in IST in the app.
 - **Phone** is `text` (E.164) — never a number column (leading `+`, future
   international formats).
-- The in-memory `call_state` shrinks to a cache for live WebSocket lookups —
+- The in-memory registry (`app/calls/registry.py`) is a cache for live WebSocket lookups —
   the DB is the source of truth.

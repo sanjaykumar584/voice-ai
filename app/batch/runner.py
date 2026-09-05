@@ -15,8 +15,8 @@ from typing import Awaitable, Callable
 
 from loguru import logger
 
-import db
-from batch_caller import normalize_phone, row_to_body
+from app.batch.mapper import normalize_phone, row_to_body
+from app.calls import repo as db
 
 # Dialer: async (job: dict) -> calls.id | None (None = failed to place).
 Dialer = Callable[[dict], Awaitable[str | None]]
@@ -26,11 +26,8 @@ CALL_TIMEOUT = float(os.getenv("BATCH_CALL_TIMEOUT", "600"))
 RETRY_MINUTES_NO_ANSWER = int(os.getenv("BATCH_RETRY_MINUTES_NO_ANSWER", "1440"))
 RETRY_MINUTES_DIAL_ERROR = int(os.getenv("BATCH_RETRY_MINUTES_DIAL_ERROR", "10"))
 
-# Scripted outcomes mock mode rotates through, so retries/export get variety.
-MOCK_OUTCOMES = ["PTP", "NO_PTP", "NO_ANSWER", "DISPUTE", "HARDSHIP", "PTP"]
 
 _running_campaigns: set[str] = set()
-_mock_seq: int = 0  # rotates scripted outcomes across calls (tests retries/escalations)
 
 
 def _utcnow() -> datetime:
@@ -198,41 +195,6 @@ def _retry_or_complete(job: dict, label: str, retry_minutes: int) -> None:
         )
     else:
         db.update_job(job["id"], attempts=attempts, last_outcome=label, status="completed")
-
-
-# ------------------------------ mock dialer ------------------------------ #
-
-
-async def mock_dialer(job: dict) -> str:
-    """Simulate a call: create the calls row, end it shortly with a scripted outcome."""
-    call_id = db.create_call(job["id"], job["campaign_id"], job["phone"])
-    asyncio.create_task(_mock_end_call(call_id, job))
-    return call_id
-
-
-async def _mock_end_call(call_id: str, job: dict) -> None:
-    await asyncio.sleep(float(os.getenv("MOCK_CALL_DURATION", "1.5")))
-    global _mock_seq
-    _mock_seq += 1
-    outcome = MOCK_OUTCOMES[(_mock_seq - 1) % len(MOCK_OUTCOMES)]
-    fields = {"status": "ended", "connected": True, "outcome": outcome,
-              "outcome_note": "mock", "ended_at": _utcnow()}
-    if outcome == "NO_ANSWER":
-        fields = {"status": "ended", "connected": False, "ended_at": _utcnow()}
-    if fields.get("connected"):
-        # Optionally exercise the real Storage path with a tiny dummy file.
-        try:
-            import storage
-            if storage.is_configured():
-                key = f"{call_id}.mp3"  # upload_bytes prefixes the bucket
-                storage.upload_bytes(key, b"mock-audio")
-                url = storage.signed_url(key)
-                if url:
-                    fields["recording_key"] = key
-                    fields["recording_served_url"] = url
-        except Exception as e:
-            logger.warning(f"[batch] mock recording upload skipped: {e}")
-    db.update_call(call_id, **fields)
 
 
 # -------------------------------- status --------------------------------- #

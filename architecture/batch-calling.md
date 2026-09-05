@@ -49,7 +49,7 @@ curl /batch/{id} ──► progress          curl /batch/{id}/export ──► r
 | `vobiz_api.py` | The Vobiz REST "place a call" helper |
 | `server.py` | Hosts the API + the call/WebSocket lifecycle (writes connect/end to the DB) |
 | `bot.py` | `log_outcome` writes the outcome (and escalations) to the DB |
-| `call_state.py` | **In-memory only** for live WebSocket lookups — the DB is the source of truth |
+| `app/calls/registry.py` | **In-memory only** for live WebSocket lookups — the DB is the source of truth |
 | `tests/test_batch_db.py`, `tests/test_batch_api.py` | DB/runner + HTTP integration tests (skip without Supabase) |
 
 ### Why separate `jobs` from `calls`?
@@ -77,7 +77,7 @@ retries dial errors in 10 minutes, and finishes the campaign when no job is due.
 
 ## 5. CSV mapping (unchanged from the CLI era)
 
-Same columns as `batch_caller.py`: `phoneNo` → `+91…`, `emiStartDate` → ISO,
+Same columns as the original spreadsheet import (`app/batch/mapper.py`): `phoneNo` → `+91…`, `emiStartDate` → ISO,
 decimal `pos` → int, `loanNo` last-4 → `account_number_last4`, plus the other
 script variables. The full mapped object is stored in `call_jobs.body` (jsonb)
 so a call can be replayed/audited.
@@ -100,7 +100,7 @@ The whole import → run → export loop is testable with zero calls.
 # 1. Local Supabase up (Postgres + Storage), tables migrated, .env filled:
 #    DATABASE_URL, SUPABASE_API_URL, SUPABASE_SECRET_KEY (supabase status)
 # 2. Start the server:
-.venv/bin/python server.py
+.venv/bin/python -m app.server
 
 # 3. Trigger a batch (mock or real per MOCK_CALLS / VOBIZ creds):
 curl -F "file=@/home/sanjay/Downloads/callingv1 - Sheet1.csv" \
@@ -113,8 +113,8 @@ curl -o results.csv http://localhost:7860/batch/<campaign_id>/export
 Results CSV columns: `loanNo, customerName, phone, outcome, outcome_note,
 recording (signed URL), call_status, attempts, called_at, call_uuid`.
 
-> A legacy CSV-only CLI (`batch_caller.py --csv …`, in-memory flow) still exists
-> for the older single-server behavior; new work should use the API + DB.
+> A legacy CSV-only CLI (`scripts/batch_caller_cli.py --csv …`, in-memory flow) still
+> exists for the older single-server behavior; new work should use the API + DB.
 
 ## 8. Edge cases & notes
 

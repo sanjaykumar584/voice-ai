@@ -1,9 +1,9 @@
 from datetime import datetime
 
-from batch_caller import (
+from app.batch.mapper import (
     DEFAULT_CSV,
-    _to_int,
-    _to_iso,
+    to_int,
+    to_iso,
     default_csv,
     derive_result,
     ist_now,
@@ -28,20 +28,20 @@ def test_default_csv_fallback(monkeypatch):
     assert default_csv() == DEFAULT_CSV
 
 
-def test_to_int():
-    assert _to_int("11183") == 11183
-    assert _to_int("81144.58") == 81144
-    assert _to_int("") == 0
-    assert _to_int(None) == 0
-    assert _to_int(" 42 ") == 42
+def testto_int():
+    assert to_int("11183") == 11183
+    assert to_int("81144.58") == 81144
+    assert to_int("") == 0
+    assert to_int(None) == 0
+    assert to_int(" 42 ") == 42
 
 
-def test_to_iso():
-    assert _to_iso("01/07/2025") == "2025-07-01"
-    assert _to_iso("26/05/2025") == "2025-05-26"
-    assert _to_iso("2025-07-01") == "2025-07-01"
-    assert _to_iso("") == ""
-    assert _to_iso(None) == ""
+def testto_iso():
+    assert to_iso("01/07/2025") == "2025-07-01"
+    assert to_iso("26/05/2025") == "2025-05-26"
+    assert to_iso("2025-07-01") == "2025-07-01"
+    assert to_iso("") == ""
+    assert to_iso(None) == ""
 
 
 def test_normalize_phone():

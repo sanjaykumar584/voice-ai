@@ -1,4 +1,4 @@
-from collections_logic import build_call_context
+from app.voice.collections import build_call_context
 
 BODY = {
     "agent_name": "Meena",
@@ -39,7 +39,7 @@ def test_developer_message_matches_computed_derived():
     """The dev message must carry exactly what compute_derived returns."""
     from datetime import date
 
-    from collections_logic import compute_derived
+    from app.voice.collections import compute_derived
 
     _, dev = build_call_context(BODY)
     expected = compute_derived(BODY, date.today())

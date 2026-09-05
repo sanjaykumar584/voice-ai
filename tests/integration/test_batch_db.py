@@ -8,12 +8,13 @@ from pathlib import Path
 import psycopg
 import pytest
 
-import batch_runner
-import db
+import app.batch.dialer as dialer
+import app.batch.runner as batch_runner
+from app.calls import repo as db
 
 pytestmark = pytest.mark.db
 
-FIXTURE = Path(__file__).parent / "data" / "calling_small.csv"
+FIXTURE = Path(__file__).resolve().parent.parent / "data" / "calling_small.csv"
 
 
 @pytest.fixture()
@@ -77,7 +78,7 @@ def test_mock_run_full_campaign(monkeypatch):
     result = batch_runner.import_csv_bytes(FIXTURE.read_bytes(), name=f"run-{uuid.uuid4().hex[:6]}")
     try:
         assert result["imported"] == 6
-        asyncio.run(batch_runner.run_campaign(result["campaign_id"], batch_runner.mock_dialer))
+        asyncio.run(batch_runner.run_campaign(result["campaign_id"], dialer.mock_dialer))
         status = batch_runner.campaign_status(result["campaign_id"])
         assert status["status"] == "done"
         # 6 scripted outcomes -> 5 completed + exactly 1 NO_ANSWER scheduled for retry
@@ -99,8 +100,8 @@ def test_no_answer_retry_exhausts_after_max(monkeypatch, campaign_id):
     )
     db.update_job(job_id, max_attempts=1)
     # Force the mock's next outcome to NO_ANSWER (index 2 in MOCK_OUTCOMES).
-    monkeypatch.setattr(batch_runner, "_mock_seq", 2)
-    asyncio.run(batch_runner.run_campaign(campaign_id, batch_runner.mock_dialer))
+    monkeypatch.setattr(dialer, "_mock_seq", 2)
+    asyncio.run(batch_runner.run_campaign(campaign_id, dialer.mock_dialer))
     job = db.get_job(job_id)
     assert job["status"] == "completed"
     assert job["attempts"] == 1

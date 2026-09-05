@@ -118,11 +118,11 @@ pipecat-bot/
 │                          speaks first, wires the tools (log_outcome, end_call).
 ├── server.py              The Vobiz webhook host: /start, /answer (Voice XML),
 │                          /ws (audio stream), /recording-*, call transfer.
-├── collections_logic.py   The script (system prompt template) + the math that
+├── app/voice/collections.py  The script (prompt template) + the overdue math
 │                          works out overdue amounts before the call.
 ├── download_recording.py  Helper to fetch a call recording.
 ├── architecture/          This guide + the evals guide.
-├── server/evals/          Behavioral test scenarios (see evals.md).
+├── evals/                 Behavioral test scenarios (see evals.md).
 ├── tests/                 Fast unit tests (pytest).
 ├── requirements.txt       Production dependencies.
 ├── requirements-dev.txt   Test-only dependencies.
@@ -134,7 +134,7 @@ pipecat-bot/
 
 ## 6. The "brain" — the collections script
 
-The conversation isn't free-form. `collections_logic.py` holds your
+The conversation isn't free-form. `app/voice/collections.py` holds your
 **collections script** and turns per-call data into the prompt:
 
 ```
@@ -200,9 +200,9 @@ Key behaviours wired in:
 
 | Mode | Command | Transport | When |
 |---|---|---|---|
-| Browser dev | `python bot.py -t webrtc` | SmallWebRTC (WebRTC, prebuilt UI at :7860) | Fast iteration, no phone |
-| Phone | `python server.py` + ngrok | FastAPI WebSocket + `VobizFrameSerializer` | Real calls |
-| Eval | `python bot.py -t eval --runner-body …` | EvalTransport (RTVI, headless) | Automated tests → see evals.md |
+| Browser dev | `python -m app.bot -t webrtc` | SmallWebRTC (WebRTC, prebuilt UI at :7860) | Fast iteration, no phone |
+| Phone | `python -m app.server` + ngrok | FastAPI WebSocket + `VobizFrameSerializer` | Real calls |
+| Eval | `python -m app.bot -t eval --runner-body …` | EvalTransport (RTVI, headless) | Automated tests → see evals.md |
 
 **Why DeepSeek?** `sarvam-105b` reasons for 7–19 seconds (invisible
 chain-of-thought) before answering and sometimes returns nothing — too slow

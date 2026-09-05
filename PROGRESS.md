@@ -153,6 +153,17 @@ Key facts locked in during research:
 - Next steps.
 -->
 
+### 2026-09-06 — Production-oriented package refactor (app/)
+- Reorganized the flat root modules into a domain-oriented `app/` package (pure reorg, behavior unchanged):
+  - `app/voice/` — services (LLM factory), pipeline (run_bot), tools (log_outcome/end_call), metrics_logger, transports (`bot()` dispatch), collections (prompt + derived math).
+  - `app/telephony/` — vobiz.py (REST), router.py (webhooks + /start + recording + transfer), ws.py (WebSocket lifecycle).
+  - `app/calls/` — repo.py (Supabase SQL), registry.py (live-WS cache), router.py (call REST surface).
+  - `app/batch/` — api.py (/batch router), runner.py (worker), dialer.py (real+mock), mapper.py (CSV mapping).
+  - `app/storage/recordings.py`, `app/config.py` (env helpers + dotenv/LOG_LEVEL bootstrap), `app/main.py` (`create_app()` factory + /healthz).
+- Root `bot.py`/`server.py` are now thin launchers (`python -m app.bot` / `python -m app.server`).
+- `server/evals/` → `evals/` (kills the server.py vs server/ clash); legacy files → `scripts/`; `call_state/db/storage/vobiz_api/collections_logic/batch_*` flat modules deleted; `prompt.txt` → `plan/prompt-original.txt`; root `ARCHITECTURE.md` folded into `architecture/`.
+- Tests split into `tests/unit/` + `tests/integration/` with imports rewired. Full suite **60 passing**.
+
 ### 2026-09-06 — Supabase batch-calling API implemented + fully tested
 - New modules: `db.py` (psycopg → local Supabase Postgres; typed helpers for campaigns/jobs/calls/blocklist/escalations/audit/export), `storage.py` (Storage REST upload + signed URLs, POST semantics + apikey header for local Supabase), `vobiz_api.py` (Vobiz REST helper), `batch_runner.py` (import_csv_bytes, atomic claim loop, finalize/retry, mock dialer with rotating outcomes, export), `batch_api.py` (FastAPI router: `/batch/import|run|{id}|{id}/export`).
 - `server.py`: includes the router; WS lifecycle now persists `active`/`ended` to the DB (resolved by vobiz uuid, transfer-safe). `bot.py` `log_outcome` writes outcome + escalations rows to the DB (no-op when unconfigured). `db.delete_campaign` + `count_due_jobs` added.

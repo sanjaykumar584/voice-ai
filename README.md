@@ -28,7 +28,7 @@ cp env.example .env
 #   → set DEEPSEEK_API_KEY (LLM) and keep LLM_PROVIDER=deepseek
 
 # 3. Run — browser voice test at http://localhost:7860
-.venv/bin/python bot.py -t webrtc
+.venv/bin/python -m app.bot -t webrtc
 ```
 
 Open **http://localhost:7860**, click start, and talk to the bot. The mock
@@ -41,10 +41,10 @@ customer (from `DEV_REMINDER_BODY`) is Kumar with ₹89,464 overdue. Watch the
 
 | Mode | Command | What it does |
 |---|---|---|
-| **Browser dev** | `.venv/bin/python bot.py -t webrtc` | Talk to the bot at `http://localhost:7860` — no Vobiz, no phone |
-| **Phone (Vobiz)** | `.venv/bin/python server.py` + ngrok | Make real outbound calls (needs a Vobiz number) |
-| **Batch calling** | `.venv/bin/python batch_caller.py` | Call every row of a CSV and write results back |
-| **Behavioral evals** | `.venv/bin/python bot.py -t eval` + `pipecat eval run …` | Headless scripted conversation tests |
+| **Browser dev** | `.venv/bin/python -m app.bot -t webrtc` | Talk to the bot at `http://localhost:7860` — no Vobiz, no phone |
+| **Phone (Vobiz)** | `.venv/bin/python -m app.server` + ngrok | Make real outbound calls (needs a Vobiz number) |
+| **Batch calling** | `POST /batch/*` API | Upload a CSV, worker dials it, results back (Supabase) |
+| **Behavioral evals** | `.venv/bin/python -m app.bot -t eval` + `pipecat eval run …` | Headless scripted conversation tests |
 | **Unit tests** | `.venv/bin/python -m pytest tests/ -q` | Fast logic tests (no keys, no network) |
 
 ### Phone mode (real calls)
@@ -54,7 +54,7 @@ customer (from `DEV_REMINDER_BODY`) is Kumar with ₹89,464 overdue. Watch the
 2. Start the server and expose it:
 
    ```bash
-   .venv/bin/python server.py     # terminal 1 — FastAPI on :7860
+   .venv/bin/python -m app.server     # terminal 1 — FastAPI on :7860
    ngrok http 7860                # terminal 2 — public tunnel
    # copy the https:// URL into PUBLIC_URL in .env, restart server.py
    ```
@@ -84,7 +84,7 @@ customer (from `DEV_REMINDER_BODY`) is Kumar with ₹89,464 overdue. Watch the
    Full history (outcome + recording): `curl http://localhost:7860/calls`
    Recordings land in `recordings/` and are served at `/recordings/<file>`.
 
-> `.venv/bin/python bot.py` and `.venv/bin/python server.py` both use port
+> `.venv/bin/python -m app.bot` and `.venv/bin/python -m app.server` both use port
 > **7860** — run one at a time.
 
 ### Batch calling (spreadsheet → calls → results, via API + Supabase)
@@ -125,8 +125,7 @@ curl -o results.csv http://localhost:7860/batch/<campaign_id>/export
 - Details: [`architecture/batch-calling.md`](architecture/batch-calling.md) +
   [`architecture/database.md`](architecture/database.md).
 
-The older CSV-only CLI (`batch_caller.py --csv …`) still works for the
-in-memory flow.
+A legacy CSV-only CLI (`scripts/batch_caller_cli.py --csv …`, in-memory flow) also exists.
 
 ---
 
@@ -143,14 +142,14 @@ uv pip install --python .venv/bin/python -r requirements-dev.txt
 
 ```bash
 # Terminal 1 — the bot in eval mode (headless, waits on ws://localhost:7860)
-.venv/bin/python bot.py -t eval --runner-body server/evals/eval_body.json
+.venv/bin/python -m app.bot -t eval --runner-body evals/eval_body.json
 
 # Terminal 2 — drive a scenario
 # (PYTHONPATH so the DeepSeek judge factory is importable)
-PYTHONPATH=server/evals .venv/bin/pipecat eval run server/evals/collections_greeting.yaml -v
+PYTHONPATH=evals .venv/bin/pipecat eval run evals/collections_greeting.yaml -v
 
 # …or run the whole suite (fresh bot per scenario)
-PYTHONPATH=server/evals .venv/bin/pipecat eval suite server/evals/suite.yaml
+PYTHONPATH=evals .venv/bin/pipecat eval suite evals/suite.yaml
 ```
 
 Requires `SARVAM_API_KEY` + `DEEPSEEK_API_KEY`. The judge (for `eval:` criteria)
@@ -185,25 +184,27 @@ Key ones:
 ## Project structure
 
 ```
-├── bot.py                 # Pipeline, transports (webrtc/vobiz/eval), tools, greeting
-├── server.py              # Vobiz webhook host + /batch/* API routes
-├── batch_api.py           # HTTP API to trigger batch calling
-├── batch_runner.py        # Batch worker: import CSV, dial jobs, retries, export
-├── db.py                  # Supabase Postgres access (psycopg)
-├── storage.py             # Supabase Storage: recording uploads + signed URLs
-├── vobiz_api.py           # Vobiz REST call helper
-├── call_state.py          # In-memory registry (live WebSocket lookups only)
-├── batch_caller.py        # Legacy CSV-only CLI (in-memory flow)
-├── collections_logic.py   # The collections script (prompt template) + overdue math
-├── download_recording.py  # Recording download helper
-├── tests/                 # pytest unit + integration tests
-├── server/evals/          # Behavioral eval scenarios + judge factory + suite
-├── supabase/migrations/   # DB schema (0001_batch_calling.sql)
-├── architecture/          # Plain-English docs
-├── plan/                  # Internal planning docs (gitignored)
-├── CONFIG.md              # Every tunable explained
-├── requirements.txt       # Production deps
-└── requirements-dev.txt   # Test deps (pytest, pipecat CLI)
+├── bot.py / server.py      # Thin launchers (dev runner + webhook host)
+├── app/                    # The application package
+│   ├── main.py             # FastAPI app factory (create_app) + /healthz
+│   ├── config.py           # Env parsing + bootstrap (dotenv, LOG_LEVEL)
+│   ├── voice/              # The agent: services, pipeline, tools, transports,
+│   │                       #   metrics_logger, collections (prompt + math)
+│   ├── telephony/          # Vobiz adapter: vobiz.py (REST), router.py
+│   │                       #   (webhooks), ws.py (WebSocket lifecycle)
+│   ├── calls/              # repo.py (Supabase SQL), registry.py (live-WS
+│   │                       #   cache), router.py (/calls REST surface)
+│   ├── batch/              # api.py (/batch/*), runner.py (worker + retries),
+│   │                       #   dialer.py (real/mock), mapper.py (CSV mapping)
+│   └── storage/recordings.py  # Recording uploads + signed URLs
+├── evals/                  # Behavioral eval scenarios + judge factory + suite
+├── scripts/                # Legacy CLI (batch_caller_cli) + download_recording
+├── tests/{unit,integration}/ # pytest suites (DB tests skip w/o Supabase)
+├── supabase/migrations/    # DB schema (0001_batch_calling.sql)
+├── architecture/           # Plain-English docs
+├── plan/                   # Internal planning docs (gitignored)
+├── CONFIG.md               # Every tunable explained
+├── requirements*.txt       # Dependencies
 ```
 
 ## Docs
