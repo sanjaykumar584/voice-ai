@@ -1,0 +1,13 @@
+name: collections_identity_arrears
+judge:
+  eval:
+    factory: judge_factory.deepseek
+    model: deepseek-reasoner
+turns:
+  - expect:
+      - event: response
+        eval: "The bot opens by checking the caller's identity."
+  - user: "Haan, naan Kumar pesuren."
+    expect:
+      - event: response
+        eval: "The bot confirms the identity, states the arrears — the number of EMIs pending and the overdue amount spoken in a ROUNDED colloquial Indian form (lakhs, e.g. \"1 lakh rupees\" or \"around 89 thousand rupees\"), NOT as an exact digit string — and asks why the payment is delayed."

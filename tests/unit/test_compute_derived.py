@@ -1,6 +1,6 @@
 from datetime import date
 
-from collections_logic import compute_derived
+from app.voice.collections import compute_derived
 
 
 def body(**over):
