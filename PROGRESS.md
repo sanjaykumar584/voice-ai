@@ -153,6 +153,60 @@ Key facts locked in during research:
 - Next steps.
 -->
 
+### 2026-09-06 — Recordings: link-only (no local disk, no Storage)
+- Decision: recordings stay with Vobiz; the app persists only `RecordingID` + Vobiz `RecordUrl` on the `calls` row. Removed the local `recordings/` disk download and the Supabase Storage path entirely.
+- `app/telephony/router.py` `/recording-ready`: no longer downloads — stores `recording_id` + `recording_url` to the DB (via `update_call_by_vobiz_uuid`) and the in-memory registry.
+- Schema: migration `0002_recording_references.sql` (drop `recording_key/recording_served_url`, add `recording_id/recording_url`); `0001` updated for fresh installs; applied to the local DB.
+- Removed `GET /recordings/{file}` (404 now) + the `app/storage/` module + Storage env vars (`SUPABASE_API_URL`, `SUPABASE_SECRET_KEY`, `RECORDING_BUCKET`, `RECORDING_SIGNED_URL_TTL`).
+- Mock dialer writes mock `recording_id`/`recording_url` (no upload); batch export now has `recording` (Vobiz URL) + `recording_id` columns; `/calls`, mapper, repo aligned on `recording_url`.
+- `scripts/download_recording.py` now accepts a `RecordingID` (builds the authed media URL) — the documented way to fetch any MP3 with Vobiz creds.
+- Docs updated (README, CONFIG.md §10, architecture/batch-calling + database). Full suite **60 passing**; verified boot, `/recordings/*` 404, and the new export shape in mock mode.
+
+### 2026-09-06 — Production-oriented package refactor (app/)
+- Reorganized the flat root modules into a domain-oriented `app/` package (pure reorg, behavior unchanged):
+  - `app/voice/` — services (LLM factory), pipeline (run_bot), tools (log_outcome/end_call), metrics_logger, transports (`bot()` dispatch), collections (prompt + derived math).
+  - `app/telephony/` — vobiz.py (REST), router.py (webhooks + /start + recording + transfer), ws.py (WebSocket lifecycle).
+  - `app/calls/` — repo.py (Supabase SQL), registry.py (live-WS cache), router.py (call REST surface).
+  - `app/batch/` — api.py (/batch router), runner.py (worker), dialer.py (real+mock), mapper.py (CSV mapping).
+  - `app/storage/recordings.py`, `app/config.py` (env helpers + dotenv/LOG_LEVEL bootstrap), `app/main.py` (`create_app()` factory + /healthz).
+- Root `bot.py`/`server.py` are now thin launchers (`python -m app.bot` / `python -m app.server`).
+- `server/evals/` → `evals/` (kills the server.py vs server/ clash); legacy files → `scripts/`; `call_state/db/storage/vobiz_api/collections_logic/batch_*` flat modules deleted; `prompt.txt` → `plan/prompt-original.txt`; root `ARCHITECTURE.md` folded into `architecture/`.
+- Tests split into `tests/unit/` + `tests/integration/` with imports rewired. Full suite **60 passing**.
+
+### 2026-09-06 — Supabase batch-calling API implemented + fully tested
+- New modules: `db.py` (psycopg → local Supabase Postgres; typed helpers for campaigns/jobs/calls/blocklist/escalations/audit/export), `storage.py` (Storage REST upload + signed URLs, POST semantics + apikey header for local Supabase), `vobiz_api.py` (Vobiz REST helper), `batch_runner.py` (import_csv_bytes, atomic claim loop, finalize/retry, mock dialer with rotating outcomes, export), `batch_api.py` (FastAPI router: `/batch/import|run|{id}|{id}/export`).
+- `server.py`: includes the router; WS lifecycle now persists `active`/`ended` to the DB (resolved by vobiz uuid, transfer-safe). `bot.py` `log_outcome` writes outcome + escalations rows to the DB (no-op when unconfigured). `db.delete_campaign` + `count_due_jobs` added.
+- `.env`/`env.example`/`CONFIG.md`: `DATABASE_URL`, `SUPABASE_API_URL`, `SUPABASE_SECRET_KEY`, `RECORDING_BUCKET`, `RECORDING_SIGNED_URL_TTL`, `MOCK_CALLS`, `MOCK_CALL_DURATION`, `BATCH_*` knobs. `psycopg[binary]` added to requirements.
+- **Verified end-to-end (mock mode)**: import 6-row fixture → run → 5 completed + 1 NO_ANSWER scheduled for retry; varied outcomes (PTP/NO_PTP/DISPUTE/HARDSHIP); DISPUTE+HARDSHIP escalation rows; export CSV carries outcomes + signed Storage recording URLs. Cleaned all test data.
+- **Tests**: `tests/conftest.py` (db skip machinery + `db` marker registered in pytest.ini), `tests/test_batch_db.py` (crud/import/mock-run/retry-exhaust/dial-error/blocklist/escalation), `tests/test_batch_api.py` (import→run→status→export, bad file, 404s, dry-run). Full suite: **60 passing** (DB tests skip cleanly when Supabase is down). Fixed a date-dependent prompt test (worked-example amount moves as "today" advances).
+- Fixed along the way: mock recording key double-bucketed; Storage PUT→POST + `apikey` header (local Supabase requires it).
+- Docs updated: README (API triggers), CONFIG.md (§10 Supabase/batch), `architecture/batch-calling.md` rewritten for the API+DB design.
+- Next: real dials once a Vobiz number is bought (`MOCK_CALLS=` off).
+
+### 2026-08-31 — Database design doc + migration
+- `architecture/database.md`: full Supabase DB design — table purposes, copy-paste SQL (campaigns / call_jobs / calls / blocklist / escalations / audit_log + indexes), apply instructions, Storage bucket note, flow mapping, integration notes.
+- Saved the same schema as `supabase/migrations/0001_batch_calling.sql` (replays via `supabase db reset`).
+- Linked from `architecture/architecture.md` + README docs.
+- Decisions: local Supabase only, psycopg direct, RLS off (tenant_id ready), recordings → Supabase Storage + signed URLs.
+
+### 2026-08-29 — Batch input CSV made configurable
+- `batch_caller.py`: input CSV is no longer hardcoded — resolution order: `--csv` flag → `BATCH_INPUT_CSV` env → built-in Downloads default (`default_csv()`).
+- Added `BATCH_INPUT_CSV=` to `.env` + `env.example`, documented in `CONFIG.md`, `architecture/batch-calling.md`, and the README.
+- Tests: 3 new `default_csv` cases (48 total passing); verified env override + fallback via dry-run.
+
+### 2026-08-29 — Batch-calling developer doc
+- Added `architecture/batch-calling.md`: developer guide for the batch layer — flow diagram, component responsibilities, `call_state`/`app_resources` plumbing, CSV→body mapping table, result columns + `derive_result` branches, run flags, safety/edge cases, endpoints, testing, known limitations.
+- Linked from `architecture/architecture.md` and the README docs section.
+
+### 2026-08-29 — Batch calling implemented (plan/batch-calling.md)
+- **`call_state.py`** — shared in-process call registry (avoids the server↔bot import cycle).
+- **`server.py`**: keeps ended calls in history (`status: "ended"`, `connected`, `outcome`, `outcome_note`, `ended_at`); `POST /start` records phone + body; `/recording-ready` stores `recording_served_url`; new **`GET /calls`** (history with outcome/recording) and **`GET /recordings/{file}`** (path-traversal-guarded MP3 serving).
+- **`bot.py`**: `run_bot` accepts `app_resources` → `PipelineTask`; Vobiz path passes `{"call_id": …}`; `log_outcome` writes status/note into `call_state.active_calls` (verified the framework threads `app_resources` into `FunctionCallParams`).
+- **`batch_caller.py`**: loads the CSV (`/home/sanjay/Downloads/callingv1 - Sheet1.csv`), maps rows (phone→+91, DD/MM/YYYY→ISO, decimal `pos`→int, `loanNo` last-4), places 1 call at a time via `POST /start`, polls `GET /calls`, writes `outcome/outcome_note/recording/call_status/called_at/call_uuid` back into the same CSV (timestamped backup, atomic rewrite, resume-safe). Flags: `--dry-run`, `--limit`, `--from`, `--force`, `--delay`, `--timeout`, `--poll-interval`. 8AM–7PM IST guard.
+- **Tests**: `tests/test_batch_mapper.py` (mapping/phone/date/derive-result/IST) + `tests/test_outcome_store.py` (log_outcome writes to the registry). 45 passing.
+- Verified: dry-run maps all 176 rows cleanly; `/calls` + `/recordings` work; traversal guard 404s.
+- **README reverted by git flow** → rewrote it (now includes batch calling). Live batch run still blocked on a Vobiz number.
+
 ### 2026-08-29 — Architecture docs directory
 - Created `architecture/` with two prose guides, each flowing why → what → how (simple) → technical:
   - `architecture/architecture.md` — overall system: problem, components, call flow, pipeline, two run modes, LLM swap, technical reference.

@@ -14,7 +14,7 @@
 ## 1. How to experiment (quick workflow)
 
 1. Edit a value in `.env`.
-2. Restart the bot (`Ctrl+C`, then `python bot.py -t webrtc`).
+2. Restart the bot (`Ctrl+C`, then `.venv/bin/python -m app.bot -t webrtc`).
 3. Talk to it at `http://localhost:7860` and watch the `[METRICS]` lines.
 4. Change one value at a time so you know what moved the needle.
 
@@ -96,10 +96,11 @@ so the bot never answers an empty/partial sentence.
 |---|---|---|---|---|
 | `LOG_LEVEL` | `.env` | `INFO` | `INFO` = normal + `[METRICS]` latency lines. `DEBUG` = also prints every transcript and turn frame. | Use `DEBUG` when diagnosing STT/turn problems; it's very noisy for normal use. |
 | `DEV_REMINDER_BODY` | `.env` | mock (Kumar) | Fake call data used by the **browser** test (there's no Vobiz `/start` in that mode). | Change to test different customers/amounts without making a real call. A real `/start` body overrides it. |
+| `BATCH_INPUT_CSV` | `.env` | *(empty → built-in)* | The input spreadsheet the legacy `scripts/batch_caller_cli.py` reads. | Point it at whichever CSV you're calling from (`callingv1 - Sheet1.csv` etc.). The `--csv` CLI flag overrides it. |
 
 ---
 
-## 7. Vobiz telephony (phone mode only — `python server.py`)
+## 7. Vobiz telephony (phone mode only — `python -m app.server`)
 
 | Parameter | Current | What it does |
 |---|---|---|
@@ -132,7 +133,7 @@ These are intentionally tied to the transport/script and don't have env vars:
 | Smart-turn fallback | enabled | Backup "user finished talking" detector. |
 | Tools (`log_outcome`, `end_call`) | — | The script's reporting + graceful hang-up. |
 | Speak-first greeting | on connect | Identity step fires without waiting for the caller. |
-| Collections script + variables | — | Lives in `collections_logic.py` (system prompt template + `compute_derived`). |
+| Collections script + variables | — | Lives in `app/voice/collections.py` (system prompt template + `compute_derived`). |
 
 ---
 
@@ -153,10 +154,31 @@ computes the rest itself (never asks the LLM to do arithmetic).
 | `tenor_months` | Total loan tenure in months. |
 | `emis_received` | Number of EMIs paid so far. |
 
-**Derived automatically** (`collections_logic.compute_derived`):
+**Derived automatically** (`app/voice/collections.compute_derived`):
 `emis_due_till_today`, `overdue_count`, `overdue_amount` (overdue_count × emi),
 `remaining_tenor`, `has_arrears`. If `has_arrears` is false, the script logs
 `NO ARREARS` and ends politely.
+
+---
+
+## 10. Supabase & batch calling (the `/batch/*` API)
+
+Recordings are **not downloaded**: Vobiz keeps the audio; the DB stores
+`recording_id` + Vobiz's `recording_url` (fetch any MP3 with
+`scripts/download_recording.py <id>` using your Vobiz credentials).
+
+| Parameter | Where | Current | What it does | How to tune |
+|---|---|---|---|---|
+| `DATABASE_URL` | `.env` | local Supabase Postgres | Where campaigns/jobs/calls live. | From `supabase status` → "URL" under Database. |
+| `MOCK_CALLS` | `.env` | *(empty)* | `true` = simulate calls with scripted outcomes — no dialing, no Vobiz. | Use for local testing of the whole flow. |
+| `MOCK_CALL_DURATION` | `.env` | `1.5` | Seconds a mock call "lasts". | Lower for faster test runs. |
+| `BATCH_POLL_INTERVAL` | `.env` | `2.0` | Seconds between DB polls while waiting for a call. | |
+| `BATCH_CALL_TIMEOUT` | `.env` | `600` | Max seconds to wait for one call before marking it `TIMEOUT`. | |
+| `BATCH_RETRY_MINUTES_NO_ANSWER` | `.env` | `1440` | When a `NO_ANSWER` is retried (default: next day). | |
+| `BATCH_RETRY_MINUTES_DIAL_ERROR` | `.env` | `10` | When a dial failure is retried. | |
+
+Trigger a batch: `POST /batch/import` (upload CSV) → `POST /batch/{id}/run` →
+`GET /batch/{id}` → `GET /batch/{id}/export`. See `architecture/batch-calling.md`.
 
 ---
 

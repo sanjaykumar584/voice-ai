@@ -31,7 +31,7 @@ That's what this test setup does — in two layers.
 | Layer | What it tests | Speed | Needs keys? |
 |---|---|---|---|
 | **Unit tests** (`tests/`, pytest) | Pure logic: the overdue math, the prompt building, env parsing, LLM provider switch | Millis | No |
-| **Behavioral evals** (`server/evals/`, `pipecat eval`) | The *real running bot*: what it says and does in a conversation | Seconds–minutes | Yes (Sarvam + DeepSeek) |
+| **Behavioral evals** (`evals/`, `pipecat eval`) | The *real running bot*: what it says and does in a conversation | Seconds–minutes | Yes (Sarvam + DeepSeek) |
 
 **Rule of thumb:** unit tests check the **ingredients** are right; evals check
 the **dish** tastes right.
@@ -77,10 +77,10 @@ Two terminals:
 
 ```bash
 # Terminal 1 — the bot in eval mode (headless, waits on a test WS server)
-.venv/bin/python bot.py -t eval --runner-body server/evals/eval_body.json
+.venv/bin/python -m app.bot -t eval --runner-body evals/eval_body.json
 
 # Terminal 2 — drive a scenario
-.venv/bin/pipecat eval run server/evals/collections_greeting.yaml -v
+.venv/bin/pipecat eval run evals/collections_greeting.yaml -v
 ```
 
 `--runner-body` feeds the bot the same per-call data a real call would have
@@ -118,10 +118,10 @@ Two kinds of expectations:
 
 ### 5.3 The scenario suite
 
-`server/evals/suite.yaml` lists all scenarios; run everything fresh-per-scenario:
+`evals/suite.yaml` lists all scenarios; run everything fresh-per-scenario:
 
 ```bash
-.venv/bin/pipecat eval suite server/evals/suite.yaml
+.venv/bin/pipecat eval suite evals/suite.yaml
 ```
 
 | Scenario | Guards against |
@@ -168,7 +168,7 @@ the transcribed speech in audio mode.
 
 ### The judge
 
-`eval:` criteria need an LLM. Our factory (`server/evals/judge_factory.py`)
+`eval:` criteria need an LLM. Our factory (`evals/judge_factory.py`)
 builds a `DeepSeekLLMService` (default `deepseek-reasoner`) reusing the
 existing `DEEPSEEK_API_KEY` — no extra service. Deterministic checks
 (`function_call`, `text_contains`, `within_ms`) need no judge at all.

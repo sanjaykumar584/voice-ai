@@ -21,6 +21,9 @@ python-multipart
 aiohttp
 requests  # used by download_recording.py
 
+# Supabase Postgres (batch calling)
+psycopg[binary]
+
 # Environment variables
 python-dotenv
 
