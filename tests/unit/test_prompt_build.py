@@ -67,4 +67,14 @@ def test_blank_customer_name_still_builds():
 
 def test_rounding_guidance_present():
     sys_prompt, _ = build_call_context(BODY)
-    assert "Round naturally" in sys_prompt
+    assert "Lakhs rule" in sys_prompt
+    assert "17.8 lakh rupees" in sys_prompt
+
+
+def test_spoken_forms_injected():
+    """The SAY lines must carry rounded spoken amounts, not exact digits."""
+    sys_prompt, dev = build_call_context(BODY)
+    assert "Total 100647" not in sys_prompt
+    assert "Total 1 lakh rupees" in sys_prompt  # 1,00,647 overdue -> "1 lakh rupees"
+    assert "call pandren" in sys_prompt  # one-line ID phrasing
+    assert "overdue_amount_spoken" in dev

@@ -10,4 +10,4 @@ turns:
   - user: "Haan, naan Kumar pesuren."
     expect:
       - event: response
-        eval: "The bot confirms the identity, states the arrears (about 8 EMIs pending, total around 89,464 rupees), and asks why the payment is delayed."
+        eval: "The bot confirms the identity, states the arrears — the number of EMIs pending and the overdue amount spoken in a ROUNDED colloquial Indian form (lakhs, e.g. \"1 lakh rupees\" or \"around 89 thousand rupees\"), NOT as an exact digit string — and asks why the payment is delayed."

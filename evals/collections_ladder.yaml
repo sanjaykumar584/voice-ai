@@ -10,7 +10,7 @@ turns:
   - user: "Haan, naan Kumar."
     expect:
       - event: response
-        eval: "The bot states the arrears (8 EMIs pending, around 89,464 rupees) and asks why payment is delayed."
+        eval: "The bot states the arrears — number of EMIs pending and a ROUNDED colloquial overdue amount (lakhs, not exact digits) — and asks why the payment is delayed."
   - user: "Full-a close panna mudiyadhu. Money illa."
     expect:
       - event: response
